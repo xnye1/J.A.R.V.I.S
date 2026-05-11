@@ -90,6 +90,8 @@
     -webkit-tap-highlight-color: transparent; user-select: none;
   }
   .qbtn:active { background: rgba(0,242,255,0.1); border-color: var(--cyan); color: var(--cyan); }
+  .signal-btn { border-color: rgba(167,139,250,0.5); color: var(--purple); letter-spacing: 2px; font-weight: 700; }
+  .signal-btn:active { background: rgba(167,139,250,0.15); border-color: var(--purple); }
 
   /* ── Input row ── */
   #input-row { display: flex; gap: 8px; align-items: center; }
@@ -154,6 +156,7 @@
     <div class="qbtn" onclick="quickSend('시스템 점검 실시')">⚙️ 시스템 점검</div>
     <div class="qbtn" onclick="quickSend('날씨 알려줘')">🌤 날씨</div>
     <div class="qbtn" onclick="resetConv()">🔄 대화 초기화</div>
+    <div class="qbtn signal-btn" onclick="sendTestSignal()" style="grid-column:span 2;">⚡ TEST SIGNAL → HUD</div>
   </div>
 
   <!-- Text input -->
@@ -245,6 +248,12 @@ function sendText() {
 }
 
 function quickSend(text) { sendMsg(text); }
+
+function sendTestSignal() {
+  if (ws?.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: 'test_signal' }));
+  addMsg('SYSTEM', 'Test signal fired → HUD.', 'sim');
+}
 
 async function resetConv() {
   await fetch('/reset', { method: 'POST' });

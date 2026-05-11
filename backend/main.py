@@ -125,6 +125,12 @@ class ChatResponse(BaseModel):
     response: str
     simulation_mode: bool = _SIMULATION
 
+class GigaGenieRequest(BaseModel):
+    utterance: str          # spoken text from GiGA Genie device
+    userId: str = "unknown"
+    deviceId: str = "unknown"
+    extra: dict = {}
+
 
 # ── REST endpoints ────────────────────────────────────────────────────────────
 @app.get("/")
@@ -153,6 +159,26 @@ async def system_status():
 async def reset_conversation():
     jarvis.reset_conversation()
     return {"status": "conversation reset"}
+
+@app.post("/gigagenie")
+async def gigagenie_webhook(req: GigaGenieRequest):
+    """GiGA Genie bridge — receives spoken utterance, routes through JARVIS persona."""
+    if not req.utterance.strip():
+        raise HTTPException(status_code=400, detail="utterance is empty")
+
+    reply = jarvis.chat(req.utterance)
+
+    # Push to all connected HUDs so the laptop display reacts
+    await manager.broadcast_hud({
+        "type": "gigagenie_command",
+        "utterance": req.utterance,
+        "reply": reply,
+        "deviceId": req.deviceId,
+    })
+    await manager.broadcast_hud({"type": "orb_react", "intensity": 0.8, "duration": 2000})
+
+    # GiGA Genie expects a TTS-ready reply string
+    return {"reply": reply, "simulation_mode": _SIMULATION}
 
 
 # ── Page routes ───────────────────────────────────────────────────────────────
@@ -227,6 +253,12 @@ async def websocket_endpoint(ws: WebSocket):
                     "message": reply,
                 })
                 await manager.broadcast_hud({"type": "orb_react", "intensity": 1.0, "duration": 3000})
+
+            elif msg_type == "test_signal":
+                await manager.broadcast_hud({
+                    "type": "test_signal",
+                    "message": "Signal received from Sir's Mobile",
+                })
 
             elif msg_type == "remote_status":
                 # Phone's own battery/sensor data → forward to HUD

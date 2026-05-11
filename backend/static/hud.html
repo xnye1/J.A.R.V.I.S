@@ -3,429 +3,555 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>J.A.R.V.I.S — HUD</title>
+<title>J.A.R.V.I.S — BRIDGE</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --c:   #00f2ff;
+  --c2:  rgba(0,242,255,0.18);
+  --c3:  rgba(0,242,255,0.07);
+  --bg:  #000814;
+  --bg2: rgba(4,14,28,0.88);
+  --txt: #cbd5e1;
+  --dim: #3b5068;
+  --red: #ef4444;
+  --grn: #22c55e;
+  --ylw: #fbbf24;
+  --pur: #a78bfa;
+}
 
-  :root {
-    --cyan: #00f2ff;
-    --cyan-dim: rgba(0,242,255,0.15);
-    --cyan-border: rgba(0,242,255,0.25);
-    --bg: #000814;
-    --panel: rgba(10,22,40,0.75);
-    --text: #cbd5e1;
-    --muted: #475569;
-    --alert: #ef4444;
-  }
+html,body { width:100%;height:100%;background:var(--bg);color:var(--txt);
+  font-family:'Courier New',monospace;overflow:hidden; }
 
-  html, body { width: 100%; height: 100%; background: var(--bg); color: var(--text);
-    font-family: 'Courier New', monospace; overflow: hidden; }
+/* Scanlines overlay */
+body::before {
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:900;
+  background:repeating-linear-gradient(0deg,transparent,transparent 3px,
+    rgba(0,242,255,.018) 3px,rgba(0,242,255,.018) 4px);
+}
 
-  /* ── Scan line overlay ── */
-  body::after {
-    content: '';
-    position: fixed; inset: 0; pointer-events: none; z-index: 999;
-    background: repeating-linear-gradient(0deg,
-      transparent, transparent 2px,
-      rgba(0,242,255,0.012) 2px, rgba(0,242,255,0.012) 4px);
-  }
+/* Flash overlay */
+#flash {
+  position:fixed;inset:0;pointer-events:none;z-index:800;
+  background:rgba(0,242,255,0);transition:background .08s;
+}
+#flash.on { background:rgba(0,242,255,.18); }
 
-  /* ── Layout ── */
-  #app { display: grid; height: 100vh; padding: 12px; gap: 10px;
-    grid-template-rows: 44px 1fr 110px;
-    grid-template-columns: 320px 1fr; }
+/* ── Grid layout ────────────────────────────────────────────────────── */
+#app {
+  display:grid;height:100vh;padding:10px;gap:8px;
+  grid-template-rows: 40px 1fr 80px;
+  grid-template-columns: 270px 1fr 270px;
+}
 
-  /* ── Top bar ── */
-  #topbar {
-    grid-column: 1 / -1;
-    display: flex; align-items: center; justify-content: space-between;
-    border-bottom: 1px solid var(--cyan-border);
-    padding-bottom: 8px;
-  }
-  #topbar .brand { color: var(--cyan); font-size: 18px; font-weight: 700; letter-spacing: 6px; }
-  #topbar .brand span { color: var(--muted); font-size: 11px; letter-spacing: 2px; margin-left: 12px; }
-  #topbar .meta { display: flex; align-items: center; gap: 20px; }
-  #clock { color: var(--cyan); font-size: 15px; letter-spacing: 2px; }
-  #conn-status { display: flex; align-items: center; gap: 6px; font-size: 10px; letter-spacing: 2px; color: var(--muted); }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: #ef4444;
-    animation: blink 1.2s infinite; }
-  .dot.online { background: #22c55e; }
-  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+/* ── TOP BAR ── */
+#topbar {
+  grid-column:1/-1;display:flex;align-items:center;
+  border-bottom:1px solid rgba(0,242,255,.2);padding-bottom:7px;gap:20px;
+}
+.brand    { color:var(--c);font-size:17px;font-weight:700;letter-spacing:6px;flex:1; }
+.brand em { color:var(--dim);font-style:normal;font-size:10px;letter-spacing:2px;margin-left:10px; }
+#clock    { color:var(--c);font-size:15px;letter-spacing:3px; }
+#ws-chip  { display:flex;align-items:center;gap:6px;font-size:9px;letter-spacing:2px;color:var(--dim); }
+.led      { width:7px;height:7px;border-radius:50%;background:var(--red); }
+.led.on   { background:var(--grn);animation:blink 2s infinite; }
+@keyframes blink { 0%,100%{opacity:1}50%{opacity:.3} }
 
-  /* ── Left column: orb + stats ── */
-  #left { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+/* ── PANEL base ── */
+.panel {
+  background:var(--bg2);border:1px solid rgba(0,242,255,.2);
+  border-radius:13px;padding:12px 14px;
+  box-shadow:0 0 18px rgba(0,242,255,.04);position:relative;overflow:hidden;
+}
+.panel::before {           /* corner bracket TL */
+  content:'';position:absolute;top:6px;left:6px;
+  width:14px;height:14px;
+  border-top:2px solid var(--c);border-left:2px solid var(--c);opacity:.5;
+}
+.panel::after {            /* corner bracket BR */
+  content:'';position:absolute;bottom:6px;right:6px;
+  width:14px;height:14px;
+  border-bottom:2px solid var(--c);border-right:2px solid var(--c);opacity:.5;
+}
+.ptitle {
+  color:var(--c);font-size:8px;letter-spacing:3px;
+  border-bottom:1px solid rgba(0,242,255,.15);padding-bottom:7px;margin-bottom:10px;
+}
 
-  /* ── Orb ── */
-  #orb-wrap { position: relative; width: 260px; height: 260px;
-    display: flex; align-items: center; justify-content: center; }
+/* ── LEFT COLUMN ── */
+#left { display:flex;flex-direction:column;gap:8px; }
 
-  .ring {
-    position: absolute; border-radius: 50%; border: 1.5px solid var(--cyan);
-  }
-  #ring-outer {
-    width: 240px; height: 240px; opacity: 0.25;
-    border-style: dashed;
-    animation: spin-cw 14s linear infinite;
-  }
-  #ring-mid {
-    width: 192px; height: 192px; opacity: 0.5;
-    border-top-color: transparent; border-left-color: transparent;
-    animation: spin-ccw 8s linear infinite;
-  }
-  #ring-inner {
-    width: 148px; height: 148px; opacity: 0.7;
-    border-right-color: transparent;
-    animation: spin-cw 5s linear infinite;
-  }
-  .ripple {
-    position: absolute; width: 130px; height: 130px;
-    border-radius: 50%; border: 1.5px solid var(--cyan);
-    animation: ripple-out 3s ease-out infinite;
-  }
-  .ripple:nth-child(2) { animation-delay: 1.5s; }
-  @keyframes ripple-out {
-    0%   { transform: scale(1); opacity: 0.6; }
-    100% { transform: scale(2.4); opacity: 0; }
-  }
+/* Metric bars */
+.mrow  { display:flex;align-items:center;gap:7px;margin-bottom:7px; }
+.mlbl  { color:var(--dim);font-size:8px;letter-spacing:2px;width:32px; }
+.track { flex:1;height:4px;background:rgba(60,80,100,.3);border-radius:2px;overflow:hidden; }
+.fill  { height:100%;border-radius:2px;background:var(--c);transition:width .6s; }
+.fill.hi { background:var(--red); }
+.fill.md { background:var(--ylw); }
+.mval  { font-size:10px;color:var(--txt);width:38px;text-align:right; }
 
-  #orb-core {
-    width: 120px; height: 120px; border-radius: 50%;
-    background: radial-gradient(circle at 40% 35%, rgba(0,242,255,0.25), rgba(0,12,24,0.95) 70%);
-    border: 1.5px solid var(--cyan);
-    box-shadow: 0 0 28px var(--cyan), 0 0 60px rgba(0,242,255,0.3), inset 0 0 20px rgba(0,242,255,0.1);
-    display: flex; align-items: center; justify-content: center;
-    animation: pulse 2.2s ease-in-out infinite;
-    position: relative; overflow: hidden; z-index: 2;
-    transition: box-shadow 0.3s, transform 0.3s;
-  }
-  #orb-core.reacting {
-    box-shadow: 0 0 60px var(--cyan), 0 0 120px rgba(0,242,255,0.5), inset 0 0 40px rgba(0,242,255,0.3);
-    transform: scale(1.12);
-  }
-  #scan { position: absolute; width: 120%; height: 1.5px;
-    background: var(--cyan); opacity: 0.7;
-    animation: scan 2.6s ease-in-out infinite alternate; top: 50%;
-  }
-  @keyframes scan { from{transform:translateY(-55px)} to{transform:translateY(55px)} }
+/* Latency meter */
+#lat-num { font-size:28px;font-weight:700;color:var(--c);line-height:1; }
+#lat-lbl { font-size:8px;color:var(--dim);letter-spacing:2px;margin-top:2px; }
+.lat-bar-wrap { margin-top:8px;height:3px;background:rgba(60,80,100,.3);border-radius:2px; }
+#lat-bar { height:100%;background:var(--c);border-radius:2px;transition:width .4s; }
 
-  #orb-dot { width: 28px; height: 28px; border-radius: 50%; background: var(--cyan);
-    box-shadow: 0 0 16px var(--cyan), 0 0 32px rgba(0,242,255,0.6);
-    animation: pulse 2.2s ease-in-out infinite; z-index: 3;
-  }
-  @keyframes pulse {
-    0%,100% { transform: scale(1); }
-    50%      { transform: scale(1.1); }
-  }
-  @keyframes spin-cw  { to { transform: rotate(360deg); } }
-  @keyframes spin-ccw { to { transform: rotate(-360deg); } }
+/* Alert box */
+#alert-box { flex:1;overflow-y:auto;scrollbar-width:none; }
+.alert-row {
+  display:flex;gap:8px;align-items:flex-start;padding:6px 8px;margin-bottom:4px;
+  background:rgba(239,68,68,.06);border-left:2px solid var(--red);
+  border-radius:0 6px 6px 0;font-size:10px;color:#fca5a5;line-height:1.5;
+}
+.alert-row .ai { color:var(--red);font-size:10px;font-weight:700;padding-top:1px; }
 
-  #orb-label { color: var(--muted); font-size: 9px; letter-spacing: 4px; margin-top: -4px; }
+/* ── CENTER COLUMN ── */
+#center { display:flex;flex-direction:column;align-items:center;gap:8px; }
 
-  /* ── Stats panel ── */
-  .panel {
-    background: var(--panel); border: 1px solid var(--cyan-border);
-    border-radius: 12px; padding: 12px 14px;
-    box-shadow: 0 0 16px rgba(0,242,255,0.06);
-    width: 100%;
-  }
-  .panel-title { color: var(--cyan); font-size: 9px; letter-spacing: 3px;
-    margin-bottom: 10px; border-bottom: 1px solid var(--cyan-border); padding-bottom: 6px; }
+/* Orb */
+#orb-wrap { position:relative;width:300px;height:300px;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0; }
 
-  .stat-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
-  .stat-label { color: var(--muted); font-size: 9px; letter-spacing: 2px; width: 30px; }
-  .bar-track { flex: 1; height: 4px; background: rgba(100,116,139,0.2); border-radius: 2px; overflow: hidden; }
-  .bar-fill { height: 100%; border-radius: 2px; background: var(--cyan);
-    transition: width 0.6s ease; }
-  .bar-fill.warn { background: var(--alert); }
-  .stat-val { font-size: 10px; color: var(--text); width: 36px; text-align: right; }
+.ring { position:absolute;border-radius:50%;border:1.5px solid var(--c); }
+#r1 { width:280px;height:280px;opacity:.18;border-style:dashed;
+      animation:cw 18s linear infinite; }
+#r2 { width:226px;height:226px;opacity:.35;
+      border-right-color:transparent;border-bottom-color:transparent;
+      animation:ccw 9s linear infinite; }
+#r3 { width:176px;height:176px;opacity:.55;
+      border-top-color:transparent;border-left-color:transparent;
+      animation:cw 6s linear infinite; }
 
-  /* Remote status */
-  #remote-row { display: flex; align-items: center; gap: 8px; }
-  #remote-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-  #remote-dot.online { background: #22c55e; animation: blink 2s infinite; }
-  #remote-label { font-size: 10px; color: var(--muted); letter-spacing: 1px; }
-  #phone-battery { margin-left: auto; font-size: 10px; color: var(--cyan); }
+.ripple { position:absolute;width:138px;height:138px;
+  border-radius:50%;border:1.5px solid var(--c);
+  animation:rip 3.4s ease-out infinite; }
+.ripple:nth-child(2){ animation-delay:1.7s; }
+@keyframes rip { 0%{transform:scale(1);opacity:.55} 100%{transform:scale(2.6);opacity:0} }
 
-  /* ── Right column: feed ── */
-  #right { display: flex; flex-direction: column; gap: 10px; }
+#orb {
+  width:130px;height:130px;border-radius:50%;
+  background:radial-gradient(circle at 38% 32%,rgba(0,242,255,.25),rgba(0,10,22,.96) 70%);
+  border:1.5px solid var(--c);overflow:hidden;
+  box-shadow:0 0 32px var(--c),0 0 80px rgba(0,242,255,.2),
+             inset 0 0 24px rgba(0,242,255,.08);
+  display:flex;align-items:center;justify-content:center;
+  animation:breath 2.4s ease-in-out infinite;
+  transition:box-shadow .25s,transform .25s;position:relative;z-index:2;
+}
+#orb.react {
+  box-shadow:0 0 70px var(--c),0 0 140px rgba(0,242,255,.45),
+             inset 0 0 50px rgba(0,242,255,.25);
+  transform:scale(1.14);
+}
+@keyframes breath { 0%,100%{transform:scale(1)} 50%{transform:scale(1.07)} }
+#orb.react { animation:none; }
 
-  #feed-wrap {
-    flex: 1; background: var(--panel);
-    border: 1px solid var(--cyan-border); border-radius: 12px;
-    overflow-y: auto; padding: 14px;
-    scrollbar-width: thin; scrollbar-color: var(--cyan-dim) transparent;
-  }
-  .msg { margin-bottom: 12px; }
-  .msg-sender { font-size: 8px; letter-spacing: 2px; margin-bottom: 3px; color: var(--cyan); }
-  .msg-sender.remote { color: #a78bfa; }
-  .msg-sender.alert  { color: var(--alert); }
-  .msg-body {
-    background: rgba(15,23,42,0.6); border-left: 2px solid var(--cyan);
-    border-radius: 0 8px 8px 0; padding: 8px 12px;
-    font-size: 12px; line-height: 1.6; color: var(--text);
-    max-width: 90%;
-  }
-  .msg-body.remote { border-left-color: #a78bfa; }
-  .msg-body.alert  { border-left-color: var(--alert); background: rgba(239,68,68,0.06); color: #fca5a5; }
+#scan-line { position:absolute;width:120%;height:1.5px;
+  background:var(--c);opacity:.6;
+  animation:scan 2.8s ease-in-out infinite alternate; }
+@keyframes scan { from{top:20%} to{top:80%} }
+#core { width:30px;height:30px;border-radius:50%;background:var(--c);
+  box-shadow:0 0 18px var(--c),0 0 36px rgba(0,242,255,.6);z-index:3; }
 
-  /* Typing indicator */
-  #typing { display: none; align-items: center; gap: 8px; padding: 4px 0; }
-  #typing.show { display: flex; }
-  #typing span { font-size: 9px; color: var(--cyan); letter-spacing: 2px; }
-  .tdot { width: 5px; height: 5px; border-radius: 50%; background: var(--cyan);
-    animation: tdot 1.2s infinite; }
-  .tdot:nth-child(2){ animation-delay:.2s } .tdot:nth-child(3){ animation-delay:.4s }
-  @keyframes tdot { 0%,80%,100%{transform:scale(0.5);opacity:0.3} 40%{transform:scale(1);opacity:1} }
+#orb-state { font-size:9px;letter-spacing:4px;color:var(--dim);margin-top:-4px; }
 
-  /* ── Bottom bar ── */
-  #bottom {
-    grid-column: 1 / -1;
-    display: flex; align-items: center; gap: 10px;
-    border-top: 1px solid var(--cyan-border); padding-top: 8px;
-  }
-  .mini-panel { background: var(--panel); border: 1px solid var(--cyan-border);
-    border-radius: 10px; padding: 8px 14px; font-size: 9px; color: var(--muted);
-    letter-spacing: 2px; flex: 1; }
-  .mini-panel strong { color: var(--cyan); font-size: 13px; display: block; margin-top: 2px; }
-  #sim-badge {
-    background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.4);
-    border-radius: 8px; padding: 6px 14px; font-size: 9px;
-    color: #fbbf24; letter-spacing: 2px; display: none;
-  }
-  #sim-badge.show { display: block; }
+@keyframes cw  { to{transform:rotate(360deg)} }
+@keyframes ccw { to{transform:rotate(-360deg)} }
+
+/* Message feed */
+#feed-wrap {
+  flex:1;width:100%;background:rgba(4,14,28,.6);
+  border:1px solid rgba(0,242,255,.15);border-radius:12px;
+  overflow-y:auto;padding:12px;
+  scrollbar-width:thin;scrollbar-color:var(--c2) transparent;
+}
+.msg { margin-bottom:10px; }
+.mwho { font-size:8px;letter-spacing:2px;margin-bottom:3px; }
+.mwho.j { color:var(--c); }
+.mwho.r { color:var(--pur); }
+.mwho.s { color:var(--dim); }
+.mwho.a { color:var(--red); }
+.mbody {
+  font-size:11.5px;line-height:1.65;padding:7px 12px;
+  background:rgba(10,22,40,.7);border-radius:0 8px 8px 0;max-width:95%;
+}
+.mbody.j { border-left:2px solid var(--c); }
+.mbody.r { border-left:2px solid var(--pur);color:var(--pur); }
+.mbody.s { border-left:2px solid var(--dim); }
+.mbody.a { border-left:2px solid var(--red);
+  background:rgba(239,68,68,.06);color:#fca5a5; }
+.mbody.sig { border-left:2px solid var(--grn);color:var(--grn);
+  animation:sigpulse .6s ease-out; }
+@keyframes sigpulse { 0%{opacity:0;transform:translateX(-6px)} 100%{opacity:1;transform:none} }
+
+/* Typing dots */
+#typing { display:none;align-items:center;gap:6px;padding:2px 0; }
+#typing.show { display:flex; }
+#typing span { font-size:8px;color:var(--c);letter-spacing:2px; }
+.td { width:5px;height:5px;border-radius:50%;background:var(--c);
+  animation:td 1.1s infinite; }
+.td:nth-child(2){animation-delay:.18s}.td:nth-child(3){animation-delay:.36s}
+@keyframes td { 0%,80%,100%{transform:scale(.5);opacity:.3} 40%{transform:scale(1);opacity:1} }
+
+/* ── RIGHT COLUMN ── */
+#right { display:flex;flex-direction:column;gap:8px; }
+
+/* Remote chip */
+#remote-chip { display:flex;align-items:center;gap:10px; }
+#rdot { width:10px;height:10px;border-radius:50%;background:var(--red); }
+#rdot.on { background:var(--grn);animation:blink 1.8s infinite; }
+#rlbl { font-size:10px;color:var(--dim);letter-spacing:1px;flex:1; }
+#pbat { font-size:12px;color:var(--c); }
+
+/* Event log */
+#evt-log { flex:1;overflow-y:auto;scrollbar-width:none; }
+.evt {
+  display:flex;gap:8px;align-items:flex-start;
+  padding:5px 0;border-bottom:1px solid rgba(0,242,255,.07);
+  font-size:10px;line-height:1.5;
+}
+.evt-time { color:var(--dim);flex-shrink:0;font-size:9px; }
+.evt-txt  { color:var(--txt); }
+.evt-txt.hi { color:var(--grn); }
+.evt-txt.al { color:var(--red); }
+
+/* Signal test */
+#sig-btn {
+  width:100%;padding:10px;border-radius:10px;cursor:pointer;
+  background:rgba(0,242,255,.06);border:1px solid rgba(0,242,255,.3);
+  color:var(--c);font-family:'Courier New',monospace;
+  font-size:10px;letter-spacing:2px;
+  transition:background .15s;
+}
+#sig-btn:hover { background:rgba(0,242,255,.14); }
+
+/* ── BOTTOM BAR ── */
+#bot {
+  grid-column:1/-1;display:flex;align-items:center;gap:8px;
+  border-top:1px solid rgba(0,242,255,.15);padding-top:7px;
+}
+.bchip { flex:1;background:var(--bg2);border:1px solid rgba(0,242,255,.15);
+  border-radius:8px;padding:6px 12px;font-size:8px;color:var(--dim);letter-spacing:2px; }
+.bchip strong { color:var(--c);font-size:13px;display:block;margin-top:1px; }
+#sim-warn { display:none;background:rgba(251,191,36,.06);
+  border:1px solid rgba(251,191,36,.35);border-radius:8px;
+  padding:6px 12px;font-size:9px;color:var(--ylw);letter-spacing:1px; }
+#sim-warn.show { display:block; }
 </style>
 </head>
 <body>
+<div id="flash"></div>
 <div id="app">
 
-  <!-- Top bar -->
-  <div id="topbar">
-    <div class="brand">J.A.R.V.I.S <span>HEADS-UP DISPLAY v1.0</span></div>
-    <div class="meta">
-      <div id="conn-status"><div class="dot" id="ws-dot"></div><span id="ws-label">CONNECTING</span></div>
-      <div id="clock">--:--:--</div>
-    </div>
+<!-- TOP BAR -->
+<div id="topbar">
+  <div class="brand">J.A.R.V.I.S <em>BRIDGE DISPLAY  v1.1</em></div>
+  <div id="ws-chip"><div class="led" id="ws-led"></div><span id="ws-lbl">CONNECTING</span></div>
+  <div id="clock">--:--:--</div>
+</div>
+
+<!-- LEFT -->
+<div id="left">
+
+  <div class="panel">
+    <div class="ptitle">SERVER TELEMETRY</div>
+    <div class="mrow"><div class="mlbl">CPU</div>
+      <div class="track"><div class="fill" id="cpu-fill" style="width:0%"></div></div>
+      <div class="mval" id="cpu-v">--%</div></div>
+    <div class="mrow"><div class="mlbl">MEM</div>
+      <div class="track"><div class="fill" id="mem-fill" style="width:0%"></div></div>
+      <div class="mval" id="mem-v">--%</div></div>
+    <div class="mrow"><div class="mlbl">S-BAT</div>
+      <div class="track"><div class="fill" id="bat-fill" style="width:0%"></div></div>
+      <div class="mval" id="bat-v">--%</div></div>
+    <div class="mrow"><div class="mlbl">LINK</div>
+      <div class="track"><div class="fill" id="sig-fill" style="width:100%"></div></div>
+      <div class="mval" id="sig-v">LIVE</div></div>
   </div>
 
-  <!-- Left: orb + stats -->
-  <div id="left">
-    <div id="orb-wrap">
-      <div class="ripple"></div>
-      <div class="ripple"></div>
-      <div class="ring" id="ring-outer"></div>
-      <div class="ring" id="ring-mid"></div>
-      <div class="ring" id="ring-inner"></div>
-      <div id="orb-core">
-        <div id="scan"></div>
-        <div id="orb-dot"></div>
-      </div>
-    </div>
-    <div id="orb-label">STANDBY</div>
-
-    <!-- System stats -->
-    <div class="panel" style="flex:1">
-      <div class="panel-title">SYSTEM TELEMETRY</div>
-      <div class="stat-row">
-        <div class="stat-label">CPU</div>
-        <div class="bar-track"><div class="bar-fill" id="cpu-bar" style="width:0%"></div></div>
-        <div class="stat-val" id="cpu-val">--%</div>
-      </div>
-      <div class="stat-row">
-        <div class="stat-label">MEM</div>
-        <div class="bar-track"><div class="bar-fill" id="mem-bar" style="width:0%"></div></div>
-        <div class="stat-val" id="mem-val">--%</div>
-      </div>
-      <div class="stat-row">
-        <div class="stat-label">BAT</div>
-        <div class="bar-track"><div class="bar-fill" id="bat-bar" style="width:0%"></div></div>
-        <div class="stat-val" id="bat-val">--%</div>
-      </div>
-      <div style="height:10px"></div>
-      <div class="panel-title">REMOTE LINK</div>
-      <div id="remote-row">
-        <div id="remote-dot"></div>
-        <div id="remote-label">NO REMOTE</div>
-        <div id="phone-battery"></div>
-      </div>
-    </div>
+  <div class="panel">
+    <div class="ptitle">WS LATENCY</div>
+    <div id="lat-num">--</div>
+    <div id="lat-lbl">MS  ROUND-TRIP</div>
+    <div class="lat-bar-wrap"><div id="lat-bar" style="width:0%"></div></div>
   </div>
 
-  <!-- Right: message feed -->
-  <div id="right">
-    <div id="feed-wrap">
-      <div id="feed"></div>
-      <div id="typing">
-        <div class="tdot"></div><div class="tdot"></div><div class="tdot"></div>
-        <span>JARVIS PROCESSING</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- Bottom stats bar -->
-  <div id="bottom">
-    <div class="mini-panel">REMOTES ONLINE<strong id="stat-remotes">0</strong></div>
-    <div class="mini-panel">UPTIME<strong id="stat-uptime">00:00:00</strong></div>
-    <div class="mini-panel">MESSAGES<strong id="stat-msgs">0</strong></div>
-    <div id="sim-badge">⚠ SIMULATION MODE — KEY PENDING</div>
-    <div class="mini-panel" style="text-align:right">
-      <span style="color:var(--cyan);font-size:9px;letter-spacing:2px">ORACLE CLOUD</span>
-      <strong style="font-size:10px;color:var(--muted)">158.180.78.104:8000</strong>
-    </div>
+  <div class="panel" style="flex:1">
+    <div class="ptitle">ACTIVE ALERTS</div>
+    <div id="alert-box"></div>
   </div>
 
 </div>
 
-<script>
-const WS_URL = `ws://${location.host}/ws`;
-let ws, msgCount = 0, startTime = Date.now();
+<!-- CENTER -->
+<div id="center">
+  <div id="orb-wrap">
+    <div class="ripple"></div><div class="ripple"></div>
+    <div class="ring" id="r1"></div>
+    <div class="ring" id="r2"></div>
+    <div class="ring" id="r3"></div>
+    <div id="orb">
+      <div id="scan-line"></div>
+      <div id="core"></div>
+    </div>
+  </div>
+  <div id="orb-state">STANDBY</div>
+  <div id="feed-wrap">
+    <div id="feed"></div>
+    <div id="typing"><div class="td"></div><div class="td"></div><div class="td"></div>
+      <span>JARVIS PROCESSING</span></div>
+  </div>
+</div>
 
-// ── Clock ──────────────────────────────────────────────────────────────────
+<!-- RIGHT -->
+<div id="right">
+
+  <div class="panel">
+    <div class="ptitle">REMOTE DEVICE</div>
+    <div id="remote-chip">
+      <div id="rdot"></div>
+      <div id="rlbl">NO REMOTE LINK</div>
+      <div id="pbat"></div>
+    </div>
+  </div>
+
+  <div class="panel" style="flex:1">
+    <div class="ptitle">EVENT TIMELINE</div>
+    <div id="evt-log"></div>
+  </div>
+
+  <div class="panel">
+    <div class="ptitle">SIGNAL TEST</div>
+    <button id="sig-btn" onclick="sendTestSignal()">⚡ TRANSMIT TEST SIGNAL</button>
+  </div>
+
+</div>
+
+<!-- BOTTOM -->
+<div id="bot">
+  <div class="bchip">REMOTES<strong id="b-rem">0</strong></div>
+  <div class="bchip">MESSAGES<strong id="b-msg">0</strong></div>
+  <div class="bchip">UPTIME<strong id="b-up">00:00:00</strong></div>
+  <div class="bchip">SERVER<strong style="font-size:10px;color:var(--dim)">158.180.78.104:8000</strong></div>
+  <div id="sim-warn">⚠ SIMULATION MODE — KEY PENDING 16th</div>
+</div>
+
+</div><!-- /app -->
+
+<script>
+const WS = `ws://${location.host}/ws`;
+let ws, pingAt, latMs = 0, msgCnt = 0, startMs = Date.now(), orbTimer;
+
+/* ── Clock + Uptime ── */
 function tick() {
-  const now = new Date();
-  document.getElementById('clock').textContent = now.toTimeString().slice(0,8);
-  const up = Math.floor((Date.now()-startTime)/1000);
-  const h = String(Math.floor(up/3600)).padStart(2,'0');
-  const m = String(Math.floor((up%3600)/60)).padStart(2,'0');
-  const s = String(up%60).padStart(2,'0');
-  document.getElementById('stat-uptime').textContent = `${h}:${m}:${s}`;
+  const n = new Date();
+  document.getElementById('clock').textContent = n.toTimeString().slice(0,8);
+  const s = Math.floor((Date.now()-startMs)/1000);
+  document.getElementById('b-up').textContent =
+    [Math.floor(s/3600),Math.floor(s%3600/60),s%60].map(v=>String(v).padStart(2,'0')).join(':');
 }
 setInterval(tick, 1000); tick();
 
-// ── Orb reactions ──────────────────────────────────────────────────────────
-const orbCore  = document.getElementById('orb-core');
-const orbLabel = document.getElementById('orb-label');
-let orbTimer;
-
-function orbReact(intensity, duration, label='PROCESSING') {
-  orbCore.classList.add('reacting');
-  orbLabel.textContent = label;
+/* ── Orb ── */
+const orb = document.getElementById('orb');
+const orbState = document.getElementById('orb-state');
+function orbReact(label='PROCESSING', ms=3000) {
+  orb.classList.add('react');
+  orbState.textContent = label;
   clearTimeout(orbTimer);
-  orbTimer = setTimeout(() => {
-    orbCore.classList.remove('reacting');
-    orbLabel.textContent = ws?.readyState === 1 ? 'STANDBY' : 'OFFLINE';
-  }, duration);
+  orbTimer = setTimeout(() => { orb.classList.remove('react'); orbState.textContent = 'STANDBY'; }, ms);
 }
 
-// ── Message feed ──────────────────────────────────────────────────────────
-const feed   = document.getElementById('feed');
+/* ── Flash ── */
+const flashEl = document.getElementById('flash');
+function flash() {
+  flashEl.classList.add('on');
+  setTimeout(() => flashEl.classList.remove('on'), 350);
+}
+
+/* ── Feed ── */
+const feed = document.getElementById('feed');
 const typing = document.getElementById('typing');
-
-function addMsg(sender, text, cls='') {
-  const d = document.createElement('div');
-  d.className = 'msg';
-  d.innerHTML = `<div class="msg-sender ${cls}">${sender}</div>
-                 <div class="msg-body ${cls}">${text}</div>`;
+function addMsg(who, text, cls) {
+  const d = document.createElement('div'); d.className = 'msg';
+  d.innerHTML = `<div class="mwho ${cls}">${who}</div><div class="mbody ${cls}">${escHtml(text)}</div>`;
   feed.appendChild(d);
-  feed.parentElement.scrollTop = feed.parentElement.scrollHeight;
-  msgCount++;
-  document.getElementById('stat-msgs').textContent = msgCount;
+  feed.parentElement.scrollTop = 1e9;
+  msgCnt++; document.getElementById('b-msg').textContent = msgCnt;
+}
+function escHtml(t) { return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* ── Event log ── */
+const evtLog = document.getElementById('evt-log');
+function addEvt(text, cls='') {
+  const now = new Date().toTimeString().slice(0,8);
+  const d = document.createElement('div'); d.className = 'evt';
+  d.innerHTML = `<div class="evt-time">${now}</div><div class="evt-txt ${cls}">${escHtml(text)}</div>`;
+  evtLog.insertBefore(d, evtLog.firstChild);
+  if (evtLog.children.length > 30) evtLog.lastChild.remove();
 }
 
-// ── Status update ──────────────────────────────────────────────────────────
-function updateStatus(data) {
-  const cpu = data.cpu_percent || 0;
-  const mem = data.memory_percent || 0;
-  const bat = data.battery_percent;
+/* ── Alerts ── */
+const alertBox = document.getElementById('alert-box');
+function addAlert(text) {
+  const d = document.createElement('div'); d.className = 'alert-row';
+  d.innerHTML = `<div class="ai">!</div><div>${escHtml(text)}</div>`;
+  alertBox.insertBefore(d, alertBox.firstChild);
+  if (alertBox.children.length > 5) alertBox.lastChild.remove();
+}
 
-  document.getElementById('cpu-bar').style.width = cpu + '%';
-  document.getElementById('cpu-bar').className = 'bar-fill' + (cpu >= 85 ? ' warn' : '');
-  document.getElementById('cpu-val').textContent = cpu.toFixed(0) + '%';
-
-  document.getElementById('mem-bar').style.width = mem + '%';
-  document.getElementById('mem-bar').className = 'bar-fill' + (mem >= 90 ? ' warn' : '');
-  document.getElementById('mem-val').textContent = mem.toFixed(0) + '%';
-
-  if (bat !== null && bat !== undefined) {
-    document.getElementById('bat-bar').style.width = bat + '%';
-    document.getElementById('bat-bar').className = 'bar-fill' + (bat < 20 ? ' warn' : '');
-    document.getElementById('bat-val').textContent = bat.toFixed(0) + '%';
-  }
-
-  if (data.remotes_online !== undefined) {
-    document.getElementById('stat-remotes').textContent = data.remotes_online;
+/* ── Telemetry ── */
+function updateTelemetry(data) {
+  const set = (id, val, hi, md) => {
+    const fill = document.getElementById(id+'-fill');
+    const vEl  = document.getElementById(id+'-v');
+    if (!fill) return;
+    const pct = Math.min(100, val || 0);
+    fill.style.width = pct + '%';
+    fill.className = 'fill' + (pct>=hi?' hi':pct>=md?' md':'');
+    if (vEl) vEl.textContent = pct.toFixed(0) + '%';
+  };
+  set('cpu', data.cpu_percent,    85, 65);
+  set('mem', data.memory_percent, 90, 70);
+  if (data.battery_percent != null) set('bat', data.battery_percent, 20, 40);
+  if (data.remotes_online != null) {
+    document.getElementById('b-rem').textContent = data.remotes_online;
   }
 }
 
-// ── Remote presence ───────────────────────────────────────────────────────
-function setRemote(count, phoneBat) {
-  const dot   = document.getElementById('remote-dot');
-  const label = document.getElementById('remote-label');
-  const batEl = document.getElementById('phone-battery');
-  document.getElementById('stat-remotes').textContent = count;
-  if (count > 0) {
-    dot.className = 'online'; label.textContent = `${count} REMOTE${count>1?'S':''} ONLINE`;
-  } else {
-    dot.className = ''; label.textContent = 'NO REMOTE';
-  }
-  if (phoneBat !== undefined) batEl.textContent = `📱 ${phoneBat}%`;
+/* ── Latency ── */
+let pingInterval;
+function startPing() {
+  pingInterval = setInterval(() => {
+    if (ws?.readyState !== 1) return;
+    pingAt = Date.now();
+    ws.send(JSON.stringify({type:'ping'}));
+  }, 5000);
 }
 
-// ── WebSocket ─────────────────────────────────────────────────────────────
+function updateLatency(ms) {
+  latMs = ms;
+  document.getElementById('lat-num').textContent = ms;
+  document.getElementById('lat-lbl').textContent = ms < 60 ? 'MS  EXCELLENT' : ms < 150 ? 'MS  GOOD' : 'MS  HIGH';
+  const pct = Math.min(100, (ms / 300) * 100);
+  const bar = document.getElementById('lat-bar');
+  bar.style.width = pct + '%';
+  bar.style.background = ms < 60 ? 'var(--c)' : ms < 150 ? 'var(--ylw)' : 'var(--red)';
+}
+
+/* ── Remote status ── */
+function setRemote(count, bat) {
+  const dot  = document.getElementById('rdot');
+  const lbl  = document.getElementById('rlbl');
+  const pbat = document.getElementById('pbat');
+  document.getElementById('b-rem').textContent = count;
+  dot.className = count > 0 ? 'on' : '';
+  lbl.textContent = count > 0 ? `${count} REMOTE${count>1?'S':''} ONLINE` : 'NO REMOTE LINK';
+  if (bat !== undefined) pbat.textContent = `📱 ${bat}%`;
+}
+
+/* ── Test signal (HUD-side button) ── */
+function sendTestSignal() {
+  if (ws?.readyState !== 1) return;
+  ws.send(JSON.stringify({type:'test_signal'}));
+}
+
+/* ── WebSocket ── */
 function connect() {
-  ws = new WebSocket(WS_URL);
-  const wsDot   = document.getElementById('ws-dot');
-  const wsLabel = document.getElementById('ws-label');
+  ws = new WebSocket(WS);
+  const led = document.getElementById('ws-led');
+  const lbl = document.getElementById('ws-lbl');
 
   ws.onopen = () => {
-    ws.send(JSON.stringify({ type: 'register', device: 'hud' }));
-    wsDot.className = 'dot online'; wsLabel.textContent = 'ONLINE';
-    orbLabel.textContent = 'STANDBY';
+    ws.send(JSON.stringify({type:'register', device:'hud'}));
+    led.className = 'led on'; lbl.textContent = 'ONLINE';
+    startPing();
+    addEvt('HUD connected to JARVIS server', 'hi');
   };
-
   ws.onclose = () => {
-    wsDot.className = 'dot'; wsLabel.textContent = 'RECONNECTING';
-    orbLabel.textContent = 'OFFLINE';
+    led.className = 'led'; lbl.textContent = 'RECONNECTING';
+    orbState.textContent = 'OFFLINE';
+    clearInterval(pingInterval);
+    addEvt('Connection lost — retrying…', 'al');
     setTimeout(connect, 3000);
   };
 
-  ws.onmessage = ({ data }) => {
-    const msg = JSON.parse(data);
-    switch (msg.type) {
+  ws.onmessage = ({data}) => {
+    const m = JSON.parse(data);
+    switch (m.type) {
 
       case 'connected':
-        if (msg.simulation_mode) document.getElementById('sim-badge').classList.add('show');
-        if (msg.status) updateStatus({...msg.status, remotes_online: msg.remotes_online});
-        addMsg('JARVIS', 'HUD display online. Awaiting remote link, Sir.');
+        if (m.simulation_mode) document.getElementById('sim-warn').classList.add('show');
+        if (m.status) updateTelemetry({...m.status, remotes_online: m.remotes_online});
+        addMsg('JARVIS', 'Bridge display online. Neural link established, Sir.', 'j');
+        addEvt('Bridge display registered');
+        // initial latency ping
+        pingAt = Date.now(); ws.send(JSON.stringify({type:'ping'}));
+        break;
+
+      case 'pong':
+        updateLatency(Date.now() - pingAt);
         break;
 
       case 'remote_speaking':
         typing.classList.add('show');
-        orbReact(0.6, 500, 'LISTENING');
-        addMsg('REMOTE →', msg.message, 'remote');
+        addMsg('REMOTE ▶', m.message, 'r');
+        orbReact('LISTENING', 600);
+        addEvt('Remote command: ' + m.message.slice(0,40));
         break;
 
       case 'chat_response':
         typing.classList.remove('show');
-        addMsg('JARVIS', msg.message);
-        orbReact(1.0, 3500, 'RESPONDING');
+        addMsg('JARVIS', m.message, 'j');
+        orbReact('RESPONDING', 3500);
         break;
 
       case 'proactive_alert':
-        addMsg('JARVIS ALERT', msg.message, 'alert');
-        orbReact(0.9, 3000, 'ALERT');
+        addMsg('JARVIS ALERT', m.message, 'a');
+        addAlert(m.message);
+        orbReact('ALERT', 3000);
+        flash();
         break;
 
       case 'orb_react':
-        orbReact(msg.intensity, msg.duration);
+        orbReact(undefined, m.duration);
         break;
 
       case 'status':
-        updateStatus(msg.data);
+        updateTelemetry(m.data);
         break;
 
       case 'remote_status':
-        setRemote(msg.count ?? 1, msg.battery);
+        setRemote(1, m.battery);
+        addEvt(`Phone battery: ${m.battery}%`);
         break;
 
       case 'remote_connected':
-        setRemote(msg.count);
-        addMsg('SYSTEM', `Remote device connected. ${msg.count} link(s) active.`);
-        orbReact(0.5, 1500, 'LINKED');
+        setRemote(m.count);
+        addMsg('SYSTEM', `Remote device linked. ${m.count} connection(s) active.`, 's');
+        addEvt(`Remote connected (${m.count} total)`, 'hi');
+        orbReact('LINK ESTABLISHED', 1500);
         break;
 
       case 'remote_disconnected':
-        setRemote(msg.count);
-        if (msg.count === 0) addMsg('SYSTEM', 'Remote device disconnected.');
+        setRemote(m.count);
+        addEvt('Remote disconnected', 'al');
+        if (m.count === 0) addMsg('SYSTEM', 'Remote link dropped.', 's');
+        break;
+
+      case 'test_signal':
+        flash(); flash();
+        addMsg('SIGNAL', '⚡ Signal Received from Sir\'s Mobile — All systems nominal.', 'sig');
+        orbReact('SIGNAL LOCK', 2500);
+        addEvt('TEST SIGNAL received', 'hi');
+        break;
+
+      case 'gigagenie_command':
+        addMsg('GIGA GENIE ▶', m.query, 'r');
+        addMsg('JARVIS', m.message, 'j');
+        orbReact('GIGA GENIE', 3000);
+        addEvt('GiGA Genie command received', 'hi');
+        flash();
         break;
     }
   };
