@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000814">
+<title>JARVIS Remote</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --cyan: #00f2ff; --bg: #000814; --panel: rgba(10,22,40,0.9);
+    --text: #cbd5e1; --muted: #475569; --border: rgba(0,242,255,0.22);
+    --alert: #ef4444; --purple: #a78bfa;
+  }
+
+  html, body { width: 100%; height: 100%; background: var(--bg); color: var(--text);
+    font-family: 'Courier New', monospace; overflow: hidden; }
+
+  #app { display: flex; flex-direction: column; height: 100dvh;
+    padding: env(safe-area-inset-top, 12px) 16px env(safe-area-inset-bottom, 16px); gap: 10px; }
+
+  /* ── Top bar ── */
+  #topbar { display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 0; border-bottom: 1px solid var(--border); }
+  #topbar .brand { color: var(--cyan); font-size: 13px; letter-spacing: 4px; font-weight: 700; }
+  #conn-wrap { display: flex; align-items: center; gap: 6px; font-size: 9px;
+    letter-spacing: 2px; color: var(--muted); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--alert); }
+  .dot.on { background: #22c55e; animation: blink 2s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* ── Status strip ── */
+  #status-strip { display: flex; gap: 8px; }
+  .chip { flex: 1; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 8px 10px; text-align: center; }
+  .chip-label { font-size: 8px; color: var(--muted); letter-spacing: 2px; }
+  .chip-val { font-size: 16px; font-weight: 700; color: var(--cyan); margin-top: 2px; }
+  .chip-val.warn { color: var(--alert); }
+
+  /* ── Response display ── */
+  #response-box { flex: 1; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 14px; overflow-y: auto;
+    scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .msg { margin-bottom: 10px; }
+  .msg-who { font-size: 8px; letter-spacing: 2px; margin-bottom: 3px; }
+  .msg-who.j { color: var(--cyan); }
+  .msg-who.u { color: var(--purple); }
+  .msg-text { font-size: 13px; line-height: 1.6; padding: 8px 10px;
+    border-radius: 0 10px 10px 0; background: rgba(15,23,42,0.7); }
+  .msg-text.j { border-left: 2px solid var(--cyan); }
+  .msg-text.u { border-left: 2px solid var(--purple); color: var(--purple); }
+  .msg-text.sim { border-left-color: #fbbf24; color: #fbbf24; font-size: 11px; }
+
+  /* ── Voice button ── */
+  #voice-btn {
+    width: 90px; height: 90px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(0,242,255,0.2), rgba(0,12,24,0.95));
+    border: 2px solid var(--cyan);
+    box-shadow: 0 0 24px rgba(0,242,255,0.4);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: all 0.2s; -webkit-tap-highlight-color: transparent;
+    font-size: 32px; user-select: none;
+    animation: pulse-btn 2.5s ease-in-out infinite;
+  }
+  @keyframes pulse-btn {
+    0%,100% { box-shadow: 0 0 24px rgba(0,242,255,0.4); }
+    50%      { box-shadow: 0 0 44px rgba(0,242,255,0.7), 0 0 80px rgba(0,242,255,0.2); }
+  }
+  #voice-btn.listening {
+    background: radial-gradient(circle, rgba(0,242,255,0.4), rgba(0,242,255,0.1));
+    animation: listening-pulse 0.6s ease-in-out infinite alternate;
+  }
+  @keyframes listening-pulse {
+    from { transform: scale(1);    box-shadow: 0 0 30px rgba(0,242,255,0.6); }
+    to   { transform: scale(1.12); box-shadow: 0 0 60px rgba(0,242,255,1); }
+  }
+  #voice-btn:active { transform: scale(0.93); }
+
+  #center-row { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  #voice-hint { font-size: 9px; color: var(--muted); letter-spacing: 2px; }
+
+  /* ── Quick actions ── */
+  #quick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .qbtn {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 11px 8px; text-align: center; cursor: pointer;
+    font-size: 11px; color: var(--text); letter-spacing: 1px;
+    transition: background 0.15s, border-color 0.15s;
+    -webkit-tap-highlight-color: transparent; user-select: none;
+  }
+  .qbtn:active { background: rgba(0,242,255,0.1); border-color: var(--cyan); color: var(--cyan); }
+
+  /* ── Input row ── */
+  #input-row { display: flex; gap: 8px; align-items: center; }
+  #msg-input {
+    flex: 1; background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 24px;
+    padding: 12px 18px; font-size: 13px; font-family: inherit;
+    outline: none; caret-color: var(--cyan);
+  }
+  #msg-input::placeholder { color: var(--muted); }
+  #send-btn {
+    width: 48px; height: 48px; border-radius: 50%;
+    background: var(--cyan); border: none; cursor: pointer;
+    font-size: 18px; color: var(--bg); font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 14px rgba(0,242,255,0.5);
+    transition: transform 0.15s; -webkit-tap-highlight-color: transparent;
+  }
+  #send-btn:active { transform: scale(0.9); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Top bar -->
+  <div id="topbar">
+    <div class="brand">J.A.R.V.I.S</div>
+    <div id="conn-wrap">
+      <div class="dot" id="conn-dot"></div>
+      <span id="conn-label">CONNECTING</span>
+    </div>
+  </div>
+
+  <!-- Status chips -->
+  <div id="status-strip">
+    <div class="chip">
+      <div class="chip-label">SERVER</div>
+      <div class="chip-val" id="chip-server">--</div>
+    </div>
+    <div class="chip">
+      <div class="chip-label">MODE</div>
+      <div class="chip-val" id="chip-mode" style="font-size:11px">--</div>
+    </div>
+    <div class="chip">
+      <div class="chip-label">PHONE BAT</div>
+      <div class="chip-val" id="chip-bat">--%</div>
+    </div>
+  </div>
+
+  <!-- Response feed -->
+  <div id="response-box"><div id="feed"></div></div>
+
+  <!-- Voice button -->
+  <div id="center-row">
+    <div id="voice-btn" id="voice-btn">🎙</div>
+    <div id="voice-hint">HOLD TO SPEAK</div>
+  </div>
+
+  <!-- Quick actions -->
+  <div id="quick">
+    <div class="qbtn" onclick="quickSend('상태 보고')">📊 상태 보고</div>
+    <div class="qbtn" onclick="quickSend('시스템 점검 실시')">⚙️ 시스템 점검</div>
+    <div class="qbtn" onclick="quickSend('날씨 알려줘')">🌤 날씨</div>
+    <div class="qbtn" onclick="resetConv()">🔄 대화 초기화</div>
+  </div>
+
+  <!-- Text input -->
+  <div id="input-row">
+    <input id="msg-input" type="text" placeholder="명령을 내리십시오, Sir…"
+      enterkeyhint="send" autocomplete="off" autocorrect="off" spellcheck="false">
+    <button id="send-btn" onclick="sendText()">▶</button>
+  </div>
+
+</div>
+
+<script>
+const WS_URL = `ws://${location.host}/ws`;
+let ws;
+
+// ── Battery reporting ──────────────────────────────────────────────────────
+function getBattery() {
+  if (!navigator.getBattery) return;
+  navigator.getBattery().then(b => {
+    const pct = Math.round(b.level * 100);
+    document.getElementById('chip-bat').textContent = pct + '%';
+    document.getElementById('chip-bat').className = 'chip-val' + (pct < 20 ? ' warn' : '');
+    if (ws?.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'remote_status', battery: pct, plugged: b.charging }));
+    }
+    b.addEventListener('levelchange', getBattery);
+    b.addEventListener('chargingchange', getBattery);
+  });
+}
+getBattery();
+
+// ── Feed ──────────────────────────────────────────────────────────────────
+const feed = document.getElementById('feed');
+function addMsg(who, text, cls) {
+  const d = document.createElement('div');
+  d.className = 'msg';
+  d.innerHTML = `<div class="msg-who ${cls}">${who}</div><div class="msg-text ${cls}">${text}</div>`;
+  feed.appendChild(d);
+  feed.parentElement.scrollTop = feed.parentElement.scrollHeight;
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────
+function connect() {
+  ws = new WebSocket(WS_URL);
+  const dot   = document.getElementById('conn-dot');
+  const label = document.getElementById('conn-label');
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: 'register', device: 'remote' }));
+    dot.className = 'dot on'; label.textContent = 'ONLINE';
+    document.getElementById('chip-server').textContent = 'OK';
+    getBattery();
+  };
+
+  ws.onclose = () => {
+    dot.className = 'dot'; label.textContent = 'RECONNECTING';
+    document.getElementById('chip-server').textContent = '--';
+    setTimeout(connect, 3000);
+  };
+
+  ws.onmessage = ({ data }) => {
+    const msg = JSON.parse(data);
+    if (msg.type === 'connected') {
+      const mode = msg.simulation_mode ? 'SIM' : 'LIVE';
+      document.getElementById('chip-mode').textContent = mode;
+      document.getElementById('chip-mode').className = 'chip-val' + (msg.simulation_mode ? ' warn' : '');
+      if (msg.simulation_mode) addMsg('SYSTEM', 'Simulation Mode — key pending 16th.', 'sim');
+      addMsg('JARVIS', 'Remote link established, Sir. Awaiting your command.', 'j');
+    } else if (msg.type === 'chat_response') {
+      addMsg('JARVIS', msg.message, 'j');
+    } else if (msg.type === 'proactive_alert') {
+      addMsg('ALERT', msg.message, 'sim');
+    }
+  };
+}
+connect();
+
+// ── Send message ──────────────────────────────────────────────────────────
+function sendMsg(text) {
+  if (!text.trim() || ws?.readyState !== 1) return;
+  addMsg('YOU', text, 'u');
+  ws.send(JSON.stringify({ type: 'chat', message: text }));
+}
+
+function sendText() {
+  const inp = document.getElementById('msg-input');
+  sendMsg(inp.value);
+  inp.value = '';
+}
+
+function quickSend(text) { sendMsg(text); }
+
+async function resetConv() {
+  await fetch('/reset', { method: 'POST' });
+  feed.innerHTML = '';
+  addMsg('SYSTEM', 'Conversation memory cleared, Sir.', 'sim');
+}
+
+document.getElementById('msg-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendText();
+});
+
+// ── Voice input (Web Speech API) ──────────────────────────────────────────
+const voiceBtn = document.getElementById('voice-btn');
+const hint     = document.getElementById('voice-hint');
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+if (SR) {
+  const rec = new SR();
+  rec.lang = 'ko-KR';
+  rec.interimResults = false;
+  rec.maxAlternatives = 1;
+
+  rec.onstart = () => {
+    voiceBtn.classList.add('listening');
+    hint.textContent = '듣는 중...';
+  };
+  rec.onend = () => {
+    voiceBtn.classList.remove('listening');
+    hint.textContent = 'HOLD TO SPEAK';
+  };
+  rec.onresult = (e) => {
+    const text = e.results[0][0].transcript;
+    sendMsg(text);
+  };
+  rec.onerror = () => {
+    voiceBtn.classList.remove('listening');
+    hint.textContent = 'HOLD TO SPEAK';
+  };
+
+  voiceBtn.addEventListener('touchstart', e => { e.preventDefault(); rec.start(); });
+  voiceBtn.addEventListener('touchend',   e => { e.preventDefault(); rec.stop(); });
+  voiceBtn.addEventListener('mousedown',  () => rec.start());
+  voiceBtn.addEventListener('mouseup',    () => rec.stop());
+} else {
+  hint.textContent = 'VOICE UNAVAILABLE';
+  voiceBtn.style.opacity = '0.4';
+}
+</script>
+</body>
+</html>

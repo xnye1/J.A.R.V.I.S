@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>J.A.R.V.I.S — HUD</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --cyan: #00f2ff;
+    --cyan-dim: rgba(0,242,255,0.15);
+    --cyan-border: rgba(0,242,255,0.25);
+    --bg: #000814;
+    --panel: rgba(10,22,40,0.75);
+    --text: #cbd5e1;
+    --muted: #475569;
+    --alert: #ef4444;
+  }
+
+  html, body { width: 100%; height: 100%; background: var(--bg); color: var(--text);
+    font-family: 'Courier New', monospace; overflow: hidden; }
+
+  /* ── Scan line overlay ── */
+  body::after {
+    content: '';
+    position: fixed; inset: 0; pointer-events: none; z-index: 999;
+    background: repeating-linear-gradient(0deg,
+      transparent, transparent 2px,
+      rgba(0,242,255,0.012) 2px, rgba(0,242,255,0.012) 4px);
+  }
+
+  /* ── Layout ── */
+  #app { display: grid; height: 100vh; padding: 12px; gap: 10px;
+    grid-template-rows: 44px 1fr 110px;
+    grid-template-columns: 320px 1fr; }
+
+  /* ── Top bar ── */
+  #topbar {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--cyan-border);
+    padding-bottom: 8px;
+  }
+  #topbar .brand { color: var(--cyan); font-size: 18px; font-weight: 700; letter-spacing: 6px; }
+  #topbar .brand span { color: var(--muted); font-size: 11px; letter-spacing: 2px; margin-left: 12px; }
+  #topbar .meta { display: flex; align-items: center; gap: 20px; }
+  #clock { color: var(--cyan); font-size: 15px; letter-spacing: 2px; }
+  #conn-status { display: flex; align-items: center; gap: 6px; font-size: 10px; letter-spacing: 2px; color: var(--muted); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #ef4444;
+    animation: blink 1.2s infinite; }
+  .dot.online { background: #22c55e; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* ── Left column: orb + stats ── */
+  #left { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+
+  /* ── Orb ── */
+  #orb-wrap { position: relative; width: 260px; height: 260px;
+    display: flex; align-items: center; justify-content: center; }
+
+  .ring {
+    position: absolute; border-radius: 50%; border: 1.5px solid var(--cyan);
+  }
+  #ring-outer {
+    width: 240px; height: 240px; opacity: 0.25;
+    border-style: dashed;
+    animation: spin-cw 14s linear infinite;
+  }
+  #ring-mid {
+    width: 192px; height: 192px; opacity: 0.5;
+    border-top-color: transparent; border-left-color: transparent;
+    animation: spin-ccw 8s linear infinite;
+  }
+  #ring-inner {
+    width: 148px; height: 148px; opacity: 0.7;
+    border-right-color: transparent;
+    animation: spin-cw 5s linear infinite;
+  }
+  .ripple {
+    position: absolute; width: 130px; height: 130px;
+    border-radius: 50%; border: 1.5px solid var(--cyan);
+    animation: ripple-out 3s ease-out infinite;
+  }
+  .ripple:nth-child(2) { animation-delay: 1.5s; }
+  @keyframes ripple-out {
+    0%   { transform: scale(1); opacity: 0.6; }
+    100% { transform: scale(2.4); opacity: 0; }
+  }
+
+  #orb-core {
+    width: 120px; height: 120px; border-radius: 50%;
+    background: radial-gradient(circle at 40% 35%, rgba(0,242,255,0.25), rgba(0,12,24,0.95) 70%);
+    border: 1.5px solid var(--cyan);
+    box-shadow: 0 0 28px var(--cyan), 0 0 60px rgba(0,242,255,0.3), inset 0 0 20px rgba(0,242,255,0.1);
+    display: flex; align-items: center; justify-content: center;
+    animation: pulse 2.2s ease-in-out infinite;
+    position: relative; overflow: hidden; z-index: 2;
+    transition: box-shadow 0.3s, transform 0.3s;
+  }
+  #orb-core.reacting {
+    box-shadow: 0 0 60px var(--cyan), 0 0 120px rgba(0,242,255,0.5), inset 0 0 40px rgba(0,242,255,0.3);
+    transform: scale(1.12);
+  }
+  #scan { position: absolute; width: 120%; height: 1.5px;
+    background: var(--cyan); opacity: 0.7;
+    animation: scan 2.6s ease-in-out infinite alternate; top: 50%;
+  }
+  @keyframes scan { from{transform:translateY(-55px)} to{transform:translateY(55px)} }
+
+  #orb-dot { width: 28px; height: 28px; border-radius: 50%; background: var(--cyan);
+    box-shadow: 0 0 16px var(--cyan), 0 0 32px rgba(0,242,255,0.6);
+    animation: pulse 2.2s ease-in-out infinite; z-index: 3;
+  }
+  @keyframes pulse {
+    0%,100% { transform: scale(1); }
+    50%      { transform: scale(1.1); }
+  }
+  @keyframes spin-cw  { to { transform: rotate(360deg); } }
+  @keyframes spin-ccw { to { transform: rotate(-360deg); } }
+
+  #orb-label { color: var(--muted); font-size: 9px; letter-spacing: 4px; margin-top: -4px; }
+
+  /* ── Stats panel ── */
+  .panel {
+    background: var(--panel); border: 1px solid var(--cyan-border);
+    border-radius: 12px; padding: 12px 14px;
+    box-shadow: 0 0 16px rgba(0,242,255,0.06);
+    width: 100%;
+  }
+  .panel-title { color: var(--cyan); font-size: 9px; letter-spacing: 3px;
+    margin-bottom: 10px; border-bottom: 1px solid var(--cyan-border); padding-bottom: 6px; }
+
+  .stat-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+  .stat-label { color: var(--muted); font-size: 9px; letter-spacing: 2px; width: 30px; }
+  .bar-track { flex: 1; height: 4px; background: rgba(100,116,139,0.2); border-radius: 2px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 2px; background: var(--cyan);
+    transition: width 0.6s ease; }
+  .bar-fill.warn { background: var(--alert); }
+  .stat-val { font-size: 10px; color: var(--text); width: 36px; text-align: right; }
+
+  /* Remote status */
+  #remote-row { display: flex; align-items: center; gap: 8px; }
+  #remote-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  #remote-dot.online { background: #22c55e; animation: blink 2s infinite; }
+  #remote-label { font-size: 10px; color: var(--muted); letter-spacing: 1px; }
+  #phone-battery { margin-left: auto; font-size: 10px; color: var(--cyan); }
+
+  /* ── Right column: feed ── */
+  #right { display: flex; flex-direction: column; gap: 10px; }
+
+  #feed-wrap {
+    flex: 1; background: var(--panel);
+    border: 1px solid var(--cyan-border); border-radius: 12px;
+    overflow-y: auto; padding: 14px;
+    scrollbar-width: thin; scrollbar-color: var(--cyan-dim) transparent;
+  }
+  .msg { margin-bottom: 12px; }
+  .msg-sender { font-size: 8px; letter-spacing: 2px; margin-bottom: 3px; color: var(--cyan); }
+  .msg-sender.remote { color: #a78bfa; }
+  .msg-sender.alert  { color: var(--alert); }
+  .msg-body {
+    background: rgba(15,23,42,0.6); border-left: 2px solid var(--cyan);
+    border-radius: 0 8px 8px 0; padding: 8px 12px;
+    font-size: 12px; line-height: 1.6; color: var(--text);
+    max-width: 90%;
+  }
+  .msg-body.remote { border-left-color: #a78bfa; }
+  .msg-body.alert  { border-left-color: var(--alert); background: rgba(239,68,68,0.06); color: #fca5a5; }
+
+  /* Typing indicator */
+  #typing { display: none; align-items: center; gap: 8px; padding: 4px 0; }
+  #typing.show { display: flex; }
+  #typing span { font-size: 9px; color: var(--cyan); letter-spacing: 2px; }
+  .tdot { width: 5px; height: 5px; border-radius: 50%; background: var(--cyan);
+    animation: tdot 1.2s infinite; }
+  .tdot:nth-child(2){ animation-delay:.2s } .tdot:nth-child(3){ animation-delay:.4s }
+  @keyframes tdot { 0%,80%,100%{transform:scale(0.5);opacity:0.3} 40%{transform:scale(1);opacity:1} }
+
+  /* ── Bottom bar ── */
+  #bottom {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; gap: 10px;
+    border-top: 1px solid var(--cyan-border); padding-top: 8px;
+  }
+  .mini-panel { background: var(--panel); border: 1px solid var(--cyan-border);
+    border-radius: 10px; padding: 8px 14px; font-size: 9px; color: var(--muted);
+    letter-spacing: 2px; flex: 1; }
+  .mini-panel strong { color: var(--cyan); font-size: 13px; display: block; margin-top: 2px; }
+  #sim-badge {
+    background: rgba(251,191,36,0.1); border: 1px solid rgba(251,191,36,0.4);
+    border-radius: 8px; padding: 6px 14px; font-size: 9px;
+    color: #fbbf24; letter-spacing: 2px; display: none;
+  }
+  #sim-badge.show { display: block; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Top bar -->
+  <div id="topbar">
+    <div class="brand">J.A.R.V.I.S <span>HEADS-UP DISPLAY v1.0</span></div>
+    <div class="meta">
+      <div id="conn-status"><div class="dot" id="ws-dot"></div><span id="ws-label">CONNECTING</span></div>
+      <div id="clock">--:--:--</div>
+    </div>
+  </div>
+
+  <!-- Left: orb + stats -->
+  <div id="left">
+    <div id="orb-wrap">
+      <div class="ripple"></div>
+      <div class="ripple"></div>
+      <div class="ring" id="ring-outer"></div>
+      <div class="ring" id="ring-mid"></div>
+      <div class="ring" id="ring-inner"></div>
+      <div id="orb-core">
+        <div id="scan"></div>
+        <div id="orb-dot"></div>
+      </div>
+    </div>
+    <div id="orb-label">STANDBY</div>
+
+    <!-- System stats -->
+    <div class="panel" style="flex:1">
+      <div class="panel-title">SYSTEM TELEMETRY</div>
+      <div class="stat-row">
+        <div class="stat-label">CPU</div>
+        <div class="bar-track"><div class="bar-fill" id="cpu-bar" style="width:0%"></div></div>
+        <div class="stat-val" id="cpu-val">--%</div>
+      </div>
+      <div class="stat-row">
+        <div class="stat-label">MEM</div>
+        <div class="bar-track"><div class="bar-fill" id="mem-bar" style="width:0%"></div></div>
+        <div class="stat-val" id="mem-val">--%</div>
+      </div>
+      <div class="stat-row">
+        <div class="stat-label">BAT</div>
+        <div class="bar-track"><div class="bar-fill" id="bat-bar" style="width:0%"></div></div>
+        <div class="stat-val" id="bat-val">--%</div>
+      </div>
+      <div style="height:10px"></div>
+      <div class="panel-title">REMOTE LINK</div>
+      <div id="remote-row">
+        <div id="remote-dot"></div>
+        <div id="remote-label">NO REMOTE</div>
+        <div id="phone-battery"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: message feed -->
+  <div id="right">
+    <div id="feed-wrap">
+      <div id="feed"></div>
+      <div id="typing">
+        <div class="tdot"></div><div class="tdot"></div><div class="tdot"></div>
+        <span>JARVIS PROCESSING</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom stats bar -->
+  <div id="bottom">
+    <div class="mini-panel">REMOTES ONLINE<strong id="stat-remotes">0</strong></div>
+    <div class="mini-panel">UPTIME<strong id="stat-uptime">00:00:00</strong></div>
+    <div class="mini-panel">MESSAGES<strong id="stat-msgs">0</strong></div>
+    <div id="sim-badge">⚠ SIMULATION MODE — KEY PENDING</div>
+    <div class="mini-panel" style="text-align:right">
+      <span style="color:var(--cyan);font-size:9px;letter-spacing:2px">ORACLE CLOUD</span>
+      <strong style="font-size:10px;color:var(--muted)">158.180.78.104:8000</strong>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const WS_URL = `ws://${location.host}/ws`;
+let ws, msgCount = 0, startTime = Date.now();
+
+// ── Clock ──────────────────────────────────────────────────────────────────
+function tick() {
+  const now = new Date();
+  document.getElementById('clock').textContent = now.toTimeString().slice(0,8);
+  const up = Math.floor((Date.now()-startTime)/1000);
+  const h = String(Math.floor(up/3600)).padStart(2,'0');
+  const m = String(Math.floor((up%3600)/60)).padStart(2,'0');
+  const s = String(up%60).padStart(2,'0');
+  document.getElementById('stat-uptime').textContent = `${h}:${m}:${s}`;
+}
+setInterval(tick, 1000); tick();
+
+// ── Orb reactions ──────────────────────────────────────────────────────────
+const orbCore  = document.getElementById('orb-core');
+const orbLabel = document.getElementById('orb-label');
+let orbTimer;
+
+function orbReact(intensity, duration, label='PROCESSING') {
+  orbCore.classList.add('reacting');
+  orbLabel.textContent = label;
+  clearTimeout(orbTimer);
+  orbTimer = setTimeout(() => {
+    orbCore.classList.remove('reacting');
+    orbLabel.textContent = ws?.readyState === 1 ? 'STANDBY' : 'OFFLINE';
+  }, duration);
+}
+
+// ── Message feed ──────────────────────────────────────────────────────────
+const feed   = document.getElementById('feed');
+const typing = document.getElementById('typing');
+
+function addMsg(sender, text, cls='') {
+  const d = document.createElement('div');
+  d.className = 'msg';
+  d.innerHTML = `<div class="msg-sender ${cls}">${sender}</div>
+                 <div class="msg-body ${cls}">${text}</div>`;
+  feed.appendChild(d);
+  feed.parentElement.scrollTop = feed.parentElement.scrollHeight;
+  msgCount++;
+  document.getElementById('stat-msgs').textContent = msgCount;
+}
+
+// ── Status update ──────────────────────────────────────────────────────────
+function updateStatus(data) {
+  const cpu = data.cpu_percent || 0;
+  const mem = data.memory_percent || 0;
+  const bat = data.battery_percent;
+
+  document.getElementById('cpu-bar').style.width = cpu + '%';
+  document.getElementById('cpu-bar').className = 'bar-fill' + (cpu >= 85 ? ' warn' : '');
+  document.getElementById('cpu-val').textContent = cpu.toFixed(0) + '%';
+
+  document.getElementById('mem-bar').style.width = mem + '%';
+  document.getElementById('mem-bar').className = 'bar-fill' + (mem >= 90 ? ' warn' : '');
+  document.getElementById('mem-val').textContent = mem.toFixed(0) + '%';
+
+  if (bat !== null && bat !== undefined) {
+    document.getElementById('bat-bar').style.width = bat + '%';
+    document.getElementById('bat-bar').className = 'bar-fill' + (bat < 20 ? ' warn' : '');
+    document.getElementById('bat-val').textContent = bat.toFixed(0) + '%';
+  }
+
+  if (data.remotes_online !== undefined) {
+    document.getElementById('stat-remotes').textContent = data.remotes_online;
+  }
+}
+
+// ── Remote presence ───────────────────────────────────────────────────────
+function setRemote(count, phoneBat) {
+  const dot   = document.getElementById('remote-dot');
+  const label = document.getElementById('remote-label');
+  const batEl = document.getElementById('phone-battery');
+  document.getElementById('stat-remotes').textContent = count;
+  if (count > 0) {
+    dot.className = 'online'; label.textContent = `${count} REMOTE${count>1?'S':''} ONLINE`;
+  } else {
+    dot.className = ''; label.textContent = 'NO REMOTE';
+  }
+  if (phoneBat !== undefined) batEl.textContent = `📱 ${phoneBat}%`;
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────
+function connect() {
+  ws = new WebSocket(WS_URL);
+  const wsDot   = document.getElementById('ws-dot');
+  const wsLabel = document.getElementById('ws-label');
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: 'register', device: 'hud' }));
+    wsDot.className = 'dot online'; wsLabel.textContent = 'ONLINE';
+    orbLabel.textContent = 'STANDBY';
+  };
+
+  ws.onclose = () => {
+    wsDot.className = 'dot'; wsLabel.textContent = 'RECONNECTING';
+    orbLabel.textContent = 'OFFLINE';
+    setTimeout(connect, 3000);
+  };
+
+  ws.onmessage = ({ data }) => {
+    const msg = JSON.parse(data);
+    switch (msg.type) {
+
+      case 'connected':
+        if (msg.simulation_mode) document.getElementById('sim-badge').classList.add('show');
+        if (msg.status) updateStatus({...msg.status, remotes_online: msg.remotes_online});
+        addMsg('JARVIS', 'HUD display online. Awaiting remote link, Sir.');
+        break;
+
+      case 'remote_speaking':
+        typing.classList.add('show');
+        orbReact(0.6, 500, 'LISTENING');
+        addMsg('REMOTE →', msg.message, 'remote');
+        break;
+
+      case 'chat_response':
+        typing.classList.remove('show');
+        addMsg('JARVIS', msg.message);
+        orbReact(1.0, 3500, 'RESPONDING');
+        break;
+
+      case 'proactive_alert':
+        addMsg('JARVIS ALERT', msg.message, 'alert');
+        orbReact(0.9, 3000, 'ALERT');
+        break;
+
+      case 'orb_react':
+        orbReact(msg.intensity, msg.duration);
+        break;
+
+      case 'status':
+        updateStatus(msg.data);
+        break;
+
+      case 'remote_status':
+        setRemote(msg.count ?? 1, msg.battery);
+        break;
+
+      case 'remote_connected':
+        setRemote(msg.count);
+        addMsg('SYSTEM', `Remote device connected. ${msg.count} link(s) active.`);
+        orbReact(0.5, 1500, 'LINKED');
+        break;
+
+      case 'remote_disconnected':
+        setRemote(msg.count);
+        if (msg.count === 0) addMsg('SYSTEM', 'Remote device disconnected.');
+        break;
+    }
+  };
+}
+
+connect();
+</script>
+</body>
+</html>
