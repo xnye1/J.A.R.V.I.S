@@ -1,0 +1,63 @@
+# ── JARVIS Stack ──────────────────────────────────────────────────────────────
+#  Services: jarvis-api (FastAPI) + redis (conversation memory)
+#  Run:  docker compose up -d --build
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Conversation Memory Store ───────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: jarvis-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - jarvis-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI Brain ───────────────────────────────────────────────────────────
+  jarvis-api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: jarvis-api:latest
+    container_name: jarvis-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - jarvis-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+# ── Persistence ───────────────────────────────────────────────────────────────
+volumes:
+  redis_data:
+    driver: local
+
+# ── Network ───────────────────────────────────────────────────────────────────
+networks:
+  jarvis-net:
+    driver: bridge

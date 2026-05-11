@@ -1,0 +1,48 @@
+# ═══════════════════════════════════════════
+#  JARVIS — Git Ignore (Security First)
+# ═══════════════════════════════════════════
+
+# Secrets — NEVER commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Expo
+frontend/node_modules/
+frontend/.expo/
+frontend/dist/
+frontend/.env
+
+# Docker
+*.log
+
+# OS
+.DS_Store
+.DS_Store?
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Claude Code internal
+.claude/
