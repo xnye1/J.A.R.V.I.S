@@ -18,6 +18,7 @@ from services.productivity_service import ProductivityService
 from services.intelligence_service import IntelligenceService
 from services.system_service    import SystemService
 from services.analysis_service  import AnalysisService
+from services.school_service    import SchoolService
 
 if TYPE_CHECKING:
     from core.dispatcher import HUDDispatcher
@@ -52,6 +53,7 @@ class ServiceRegistry:
             IntelligenceService,
             SystemService,
             AnalysisService,
+            SchoolService,
         ]
         for cls in classes:
             svc = cls(self._dp, self._st)

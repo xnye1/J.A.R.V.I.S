@@ -13,16 +13,21 @@ import os
 from fastapi import APIRouter, Header, HTTPException
 
 from api.models import (
+    AppOpenRequest, BulkSyncRequest, StudyPlanRequest,
     CalendarPayload, ChatRequest, ChatResponse, DeployNotifyRequest,
     FocusRequest, GigaGenieRequest, ReactorRequest,
     RememberRequest, RecallRequest,
 )
 from core.anger_engine  import anger
 from core.dispatcher    import dispatcher, Priority
+from core.dorm_tracker  import dorm_tracker
 from core.fury_tracker  import fury
 from core.persona       import IDENTITY, JarvisPersona
 from core.state         import state
-from core.stealth       import classify_location, decide_output, FocusMode
+from core.stealth       import (
+    classify_location, decide_output, FocusMode,
+    is_academy_hour, is_weekend_hyperfocus,
+)
 from core.system_info   import get_detailed_status, to_dict as status_to_dict
 from system.monitor     import get_current_status
 
@@ -276,4 +281,188 @@ async def stealth_info(lat: float = 0.0, lon: float = 0.0,
         airpods_connected=airpods,
         giga_genie_online=False,
     )
-    return {"zone": zone, "output_mode": route.mode, "reason": route.reason}
+    return {
+        "zone": zone, "output_mode": route.mode, "reason": route.reason,
+        "academy_hour": is_academy_hour(), "weekend_focus": is_weekend_hyperfocus(),
+        "dorm": dorm_tracker.status(),
+    }
+
+
+# ── iPhone Shortcut Triggers ──────────────────────────────────────────────────
+
+@router.post("/app/open")
+async def shortcut_app_open(req: AppOpenRequest):
+    """
+    iPhone Shortcut fires this when a potentially distracting app opens.
+    Logs the event; increments fury if focus/academy/weekend is active.
+    """
+    fury.on_message(focus_active=req.focus_active or state.dopamine_guard_active)
+    payload = {
+        "type":     "app_open_alert",
+        "app":      req.app_name,
+        "bundle":   req.bundle_id,
+        "focus":    req.focus_active,
+        "academy":  is_academy_hour(),
+        "weekend":  is_weekend_hyperfocus(),
+        "fury":     anger.gauge,
+    }
+    await dispatcher.emit(payload, Priority.HIGH if is_academy_hour() else Priority.NORMAL)
+    return {"logged": True, "fury_gauge": anger.gauge, "fury_stage": anger.profile.name}
+
+
+@router.post("/location/arrive")
+async def shortcut_location_arrive(
+    lat: float, lon: float,
+    person: str  = "sir",
+    airpods: bool = False,
+    focus_mode: str = "none",
+):
+    """
+    Shortcut-friendly GPS arrival endpoint (mirrors /arrival, simpler signature).
+    Also updates DormTracker for dorm entry/exit detection.
+    """
+    zone  = classify_location(lat, lon)
+    route = decide_output(
+        location=zone,
+        focus_mode=FocusMode(focus_mode),
+        airpods_connected=airpods,
+        giga_genie_online=False,
+    )
+    result: dict = {"zone": zone, "output_mode": route.mode, "reason": route.reason}
+
+    # Dorm tracker: detect entry / exit and generate briefing
+    briefing = dorm_tracker.on_location_update(zone)
+    if briefing:
+        await dispatcher.emit(briefing, Priority.HIGH)
+        result["briefing"] = True
+    elif dorm_tracker.in_dorm:
+        result["standby"] = True
+
+    if zone == "home" and _manager:
+        from core.voice_bridge import handle_arrival
+        arrival = await handle_arrival(
+            lat, lon, person=person, route=route,
+            broadcast_fn=_manager.broadcast_all,
+            voice_params=None,   # uses live gauge mapping
+        )
+        result.update(arrival)
+
+    if _manager:
+        await dispatcher.emit({"type": "location_update", **result}, Priority.NORMAL)
+        if zone == "dorm":
+            await dispatcher.emit({"type": "dorm_enter", "zone": "dorm"}, Priority.HIGH)
+
+    return result
+
+
+@router.post("/focus/toggle")
+async def shortcut_focus_toggle():
+    """
+    Toggle focus (Pomodoro) session from iPhone Shortcut.
+    If active → end. If inactive → begin 25-min session.
+    """
+    from services.dopamine_guard import DopamineGuard
+    guard: DopamineGuard | None = _registry.get("dopamine_guard") if _registry else None
+    if guard is None:
+        raise HTTPException(status_code=503, detail="DopamineGuard not available.")
+    if guard.session_status().get("active"):
+        result = await guard.end_session() or {"status": "ended"}
+        return {**result, "toggled": "off"}
+    session = await guard.begin_session(25)
+    return {"status": "started", "minutes": session.duration_minutes, "toggled": "on"}
+
+
+# ── Dorm & Briefing ───────────────────────────────────────────────────────────
+
+@router.get("/dorm/status")
+async def dorm_status():
+    """Current dormitory isolation state."""
+    return dorm_tracker.status()
+
+
+@router.post("/sync/bulk")
+async def sync_bulk(req: BulkSyncRequest):
+    """
+    Accept a batch of events buffered on the iPhone during dorm offline period.
+    Re-emits each event through the dispatcher so the HUD catches up.
+    """
+    replayed = 0
+    for event in req.events:
+        if "type" in event:
+            await dispatcher.emit(event, Priority.LOW)
+            replayed += 1
+    return {"replayed": replayed, "device_id": req.device_id}
+
+
+# ── Study Plan ────────────────────────────────────────────────────────────────
+
+@router.post("/study/plan")
+async def study_plan_add(req: StudyPlanRequest):
+    """Add or update a study plan entry."""
+    from db.database import StudyPlan
+    from db.session  import get_db
+    from datetime    import datetime, timezone
+    with get_db() as db:
+        existing = db.query(StudyPlan).filter(
+            StudyPlan.subject == req.subject,
+            StudyPlan.topic   == req.topic,
+        ).first()
+        if existing:
+            existing.weakness_level = req.weakness_level
+            existing.exam_range     = req.exam_range or existing.exam_range
+            existing.target_date    = req.target_date or existing.target_date
+            existing.notes          = req.notes or existing.notes
+            existing.updated_at     = datetime.now(timezone.utc)
+            return {"action": "updated", "id": existing.id}
+        row = StudyPlan(
+            subject=req.subject, topic=req.topic,
+            weakness_level=req.weakness_level,
+            exam_range=req.exam_range, target_date=req.target_date,
+            notes=req.notes, status="pending",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        db.add(row)
+    return {"action": "created"}
+
+
+@router.get("/study/plan")
+async def study_plan_list(status: str = "pending"):
+    """List study plan entries, ordered by weakness level descending."""
+    from db.database import StudyPlan
+    from db.session  import get_db
+    with get_db() as db:
+        rows = (
+            db.query(StudyPlan)
+            .filter(StudyPlan.status == status)
+            .order_by(StudyPlan.weakness_level.desc())
+            .all()
+        )
+    return {"plans": [
+        {"id": r.id, "subject": r.subject, "topic": r.topic,
+         "weakness_level": r.weakness_level, "exam_range": r.exam_range,
+         "target_date": r.target_date, "status": r.status}
+        for r in rows
+    ]}
+
+
+# ── School & Weather ──────────────────────────────────────────────────────────
+
+@router.get("/school/meal")
+async def school_meal():
+    """Today's school lunch menu (NEIS API)."""
+    from services.school_service import SchoolService
+    svc: SchoolService | None = _registry.get("school_service") if _registry else None
+    if svc is None:
+        raise HTTPException(status_code=503, detail="SchoolService not available.")
+    return await svc.get_today_meal()
+
+
+@router.get("/weather")
+async def weather():
+    """Current weather at home location (Open-Meteo)."""
+    from services.school_service import SchoolService
+    svc: SchoolService | None = _registry.get("school_service") if _registry else None
+    if svc is None:
+        raise HTTPException(status_code=503, detail="SchoolService not available.")
+    return await svc.get_weather()

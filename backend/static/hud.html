@@ -1154,7 +1154,42 @@ reg('tts_text_fallback', m => {
   addEvt('TTS fallback: no ElevenLabs key', 'al');
 });
 
-connect();
+reg('dorm_enter', () => {
+  addMsg('SYSTEM', '🏠→🏫 기숙사 진입 감지 — STANDBY MODE. 모든 출력 일시정지.', 's');
+  addEvt('Dorm entry — standby engaged', 'al');
+  orbReact('STANDBY', 2000);
+});
+
+reg('dorm_exit_briefing', m => {
+  const hrs  = m.duration_hrs  || 0;
+  const days = m.duration_days || 0;
+  const peak = m.fury_peak     || 'GENTLE';
+  addMsg('JARVIS', `귀환 확인, Sir. ${days}일(${hrs}h) 기숙사 격리 해제. 퓨리 피크: ${peak}. 활성 목표 ${m.active_goals||0}개. 브리핑 준비됨.`, 'j');
+  if (m.critical_topics && m.critical_topics.length) {
+    const topics = m.critical_topics.map(t => `${t.subject}:${t.topic}`).join(' / ');
+    addMsg('STUDY ALERT', `취약 단원: ${topics}`, 'a');
+  }
+  if (m.goals) {
+    m.goals.forEach(g => addEvt(`목표: ${g.title} — ${g.progress}%`, g.progress >= 50 ? 'hi' : 'al'));
+  }
+  addEvt(`복귀 보고: ${days}일 격리 / 방해 ${m.total_distractions||0}건 / 효율 ${m.avg_efficiency||100}%`, 'hi');
+  flash(); orbReact('DEBRIEF', 5000);
+});
+
+reg('app_open_alert', m => {
+  const cls = m.academy || m.weekend ? 'al' : '';
+  const ctx = m.academy ? '[수업중]' : m.weekend ? '[주말집중]' : '';
+  addEvt(`${ctx} 앱 오픈: ${m.app} — 분노 ${m.fury}%`, cls);
+  if (m.academy) { addAlert(`수업 중 앱 사용: ${m.app}`); flash(); }
+});
+
+reg('school_update', m => {
+  const d  = m.data || {};
+  const el = document.getElementById('svc-study');
+  if (el) el.innerHTML =
+    `<span class="hi">${escHtml(d.meal_preview||'급식 미정')}</span> <span class="${parseFloat(d.temp)<=0?'hi':parseFloat(d.temp)>=30?'al':'grn'}">${d.temp}°C ${escHtml(d.condition||'')}</span>`;
+  flashCard('card-study');
+});
 
 /* ── Data Cascade ── */
 (function() {

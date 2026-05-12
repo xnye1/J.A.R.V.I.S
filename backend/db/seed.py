@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from db.database import AcademySchedule, Goal, Homework, SessionLocal
+from db.database import AcademySchedule, Goal, Homework, SessionLocal, StudyPlan
 
 log = logging.getLogger("jarvis.seed")
 
@@ -79,11 +79,12 @@ def seed_initial_data() -> None:
         goals_added    = _seed_goals(db)
         schedule_added = _seed_schedule(db)
         hw_added       = _seed_homework(db)
+        sp_added       = _seed_study_plans(db)
         db.commit()
-        if goals_added or schedule_added or hw_added:
+        if any([goals_added, schedule_added, hw_added, sp_added]):
             log.info(
-                "Seed complete — goals:%d  schedule:%d  homework:%d",
-                goals_added, schedule_added, hw_added,
+                "Seed complete — goals:%d  schedule:%d  homework:%d  study_plans:%d",
+                goals_added, schedule_added, hw_added, sp_added,
             )
         else:
             log.debug("Seed: all records already present, nothing inserted.")
@@ -127,3 +128,37 @@ def _seed_homework(db) -> int:
             created_at=_utcnow(), updated_at=_utcnow(),
         ))
     return len(_HOMEWORK)
+
+
+_STUDY_PLANS = [
+    # Math weaknesses
+    dict(subject="Math",    topic="수열의 극한",       weakness_level=4,
+         exam_range="1학기 중간 — 수열과 급수 전범위", target_date="2025-04-25"),
+    dict(subject="Math",    topic="적분법 (치환적분)",  weakness_level=5,
+         exam_range="1학기 기말 — 미적분 전범위",       target_date="2025-07-10"),
+    dict(subject="Math",    topic="수열 점화식",         weakness_level=3,
+         exam_range="1학기 중간",                        target_date="2025-04-25"),
+    # English weaknesses
+    dict(subject="English", topic="빈칸 추론 (고난도)", weakness_level=5,
+         exam_range="전 범위 (수능형)",                  target_date=None),
+    dict(subject="English", topic="어법·어휘",           weakness_level=3,
+         exam_range="1학기 내신 전범위",                  target_date="2025-07-10"),
+    # Korean
+    dict(subject="Korean",  topic="비문학 독해 (과학·기술 지문)", weakness_level=4,
+         exam_range="1학기 기말",                        target_date="2025-07-10"),
+    dict(subject="Korean",  topic="문학 — 현대시 분석",  weakness_level=3,
+         exam_range="1학기 기말",                        target_date="2025-07-10"),
+]
+
+
+def _seed_study_plans(db) -> int:
+    if db.query(StudyPlan).count() > 0:
+        return 0
+    for sp in _STUDY_PLANS:
+        db.add(StudyPlan(
+            subject=sp["subject"], topic=sp["topic"],
+            weakness_level=sp["weakness_level"],
+            exam_range=sp["exam_range"], target_date=sp["target_date"],
+            status="pending", created_at=_utcnow(), updated_at=_utcnow(),
+        ))
+    return len(_STUDY_PLANS)

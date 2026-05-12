@@ -59,3 +59,28 @@ class RememberRequest(BaseModel):
 class RecallRequest(BaseModel):
     query: str
     limit: int = 5
+
+
+# ── iPhone Shortcut triggers ──────────────────────────────────────────────────
+
+class AppOpenRequest(BaseModel):
+    app_name:     str
+    bundle_id:    str  = ""
+    focus_active: bool = False
+    timestamp:    str  = ""   # ISO 8601 from shortcut, optional
+
+
+class BulkSyncRequest(BaseModel):
+    """Batch of events buffered offline during dorm isolation."""
+    events:    list[dict] = []
+    device_id: str        = "iphone"
+    synced_at: str        = ""
+
+
+class StudyPlanRequest(BaseModel):
+    subject:        str
+    topic:          str
+    weakness_level: int  = 3
+    exam_range:     str  = ""
+    target_date:    str  = ""
+    notes:          str  = ""

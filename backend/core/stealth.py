@@ -2,13 +2,14 @@
 core/stealth.py — Context-aware output suppression & location routing.
 
 Priority order (highest → lowest):
-  1. Academy class in session (time-based KST schedule) → SILENT
-  2. GPS in STEALTH_ZONES (academy / library geofence)  → SILENT
-  3. focus_mode == sleep                                 → SILENT
-  4. focus_mode in (dnd, work)                          → QUIET
-  5. AirPods connected                                   → VOICE_PHONE
-  6. GiGA Genie online + home                            → VOICE_GENIE
-  7. Default                                             → VOICE_PHONE
+  1. Dormitory geofence                                  → STANDBY (full pause)
+  2. Academy class in session (KST time schedule)        → SILENT
+  3. GPS in STEALTH_ZONES (academy / library geofence)   → SILENT
+  4. focus_mode == sleep                                 → SILENT
+  5. focus_mode in (dnd, work)                           → QUIET
+  6. AirPods connected                                   → VOICE_PHONE
+  7. GiGA Genie online + home                            → VOICE_GENIE
+  8. Default                                             → VOICE_PHONE
 """
 
 from __future__ import annotations
@@ -31,8 +32,9 @@ except Exception:
 class OutputMode(str, Enum):
     VOICE_PHONE = "voice_phone"   # TTS → phone speaker / AirPods
     VOICE_GENIE = "voice_genie"   # TTS → GiGA Genie 3
-    QUIET       = "quiet"         # text notification, no voice
-    SILENT      = "silent"        # haptic/vibrate only
+    QUIET       = "quiet"         # silent text notification
+    SILENT      = "silent"        # haptic / vibrate only
+    STANDBY     = "standby"       # dormitory — all output paused
 
 
 class FocusMode(str, Enum):
@@ -43,7 +45,7 @@ class FocusMode(str, Enum):
 
 
 # ── Academy schedule (KST, repeating weekly) ─────────────────────────────────
-# Tuple: (day_of_week, start, end, label)  — day 0=Mon … 4=Fri 5=Sat 6=Sun
+# (day_of_week, start, end, label)  0=Mon … 4=Fri 5=Sat 6=Sun
 
 _ACADEMY_HOURS: tuple[tuple[int, dtime, dtime, str], ...] = (
     (4, dtime(19, 40), dtime(21, 20), "math_fri"),      # Friday math
@@ -72,6 +74,23 @@ def current_academy_session(dt: datetime | None = None) -> str | None:
     return None
 
 
+def is_weekend_hyperfocus(dt: datetime | None = None) -> bool:
+    """
+    True during the weekend high-intensity window:
+    Friday 19:40 → end of Sunday (highest Fury sensitivity period).
+    """
+    now = dt or datetime.now(_KST)
+    dow = now.weekday()
+    t   = now.time()
+    if dow == 4 and t >= dtime(19, 40):  # Friday from 19:40
+        return True
+    if dow == 5:                          # All of Saturday
+        return True
+    if dow == 6:                          # All of Sunday
+        return True
+    return False
+
+
 # ── Geofence config (from .env) ───────────────────────────────────────────────
 
 def _coord(key: str) -> float | None:
@@ -84,6 +103,7 @@ def _coord(key: str) -> float | None:
 
 GEOFENCES: dict[str, dict] = {
     "home":    {"lat": _coord("HOME_LAT"),    "lon": _coord("HOME_LON"),    "r": 100},
+    "dorm":    {"lat": _coord("DORM_LAT"),    "lon": _coord("DORM_LON"),    "r": 150},
     "academy": {"lat": _coord("ACADEMY_LAT"), "lon": _coord("ACADEMY_LON"), "r": 80},
     "library": {"lat": _coord("LIBRARY_LAT"), "lon": _coord("LIBRARY_LON"), "r": 80},
 }
@@ -121,32 +141,36 @@ def decide_output(
     focus_mode: FocusMode   = FocusMode.NONE,
     airpods_connected: bool = False,
     giga_genie_online: bool = False,
-    dt: datetime | None     = None,   # inject for testing
+    dt: datetime | None     = None,
 ) -> RouteDecision:
     """Pure function — no side effects. Returns routing decision."""
 
-    # ① Academy schedule takes absolute priority (time-based)
+    # ① Dormitory → full standby (highest priority)
+    if location == "dorm":
+        return RouteDecision(OutputMode.STANDBY, "dormitory — standby mode")
+
+    # ② Academy schedule (time-based KST)
     session = current_academy_session(dt)
     if session:
         return RouteDecision(OutputMode.SILENT, f"academy class: {session}")
 
-    # ② GPS-based stealth zones
+    # ③ GPS stealth zones
     if location in STEALTH_ZONES:
         return RouteDecision(OutputMode.SILENT, f"stealth zone: {location}")
 
-    # ③ Sleep mode
+    # ④ Sleep mode
     if focus_mode == FocusMode.SLEEP:
         return RouteDecision(OutputMode.SILENT, "sleep mode")
 
-    # ④ DND / Work focus
+    # ⑤ DND / Work focus
     if focus_mode in (FocusMode.DND, FocusMode.WORK):
         return RouteDecision(OutputMode.QUIET, f"focus mode: {focus_mode.value}")
 
-    # ⑤ AirPods
+    # ⑥ AirPods
     if airpods_connected:
         return RouteDecision(OutputMode.VOICE_PHONE, "AirPods connected")
 
-    # ⑥ GiGA Genie at home
+    # ⑦ GiGA Genie at home
     if giga_genie_online and location == "home":
         return RouteDecision(OutputMode.VOICE_GENIE, "home + GiGA Genie online")
 

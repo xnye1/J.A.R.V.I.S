@@ -26,6 +26,7 @@ print(f"[JARVIS] {'Simulation' if _SIMULATION else 'Full'} mode.")
 
 from core.anger_engine  import anger
 from core.dispatcher    import dispatcher, Priority
+from core.dorm_tracker  import dorm_tracker
 from core.fury_tracker  import fury
 from core.persona       import JarvisPersona
 from core.state         import state
@@ -271,7 +272,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 await manager.broadcast_hud({"type": "remote_status", **data})
 
             elif msg_type == "location":
-                # Phone GPS update → stealth routing + Welcome Home
+                # Phone GPS update → stealth routing + dorm tracking + Welcome Home
                 lat  = float(data.get("lat", 0))
                 lon  = float(data.get("lon", 0))
                 zone = classify_location(lat, lon)
@@ -283,17 +284,23 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     giga_genie_online=False,
                 )
                 await manager.broadcast_hud({
-                    "type":     "location_update",
-                    "zone":     zone,
-                    "mode":     route.mode,
-                    "reason":   route.reason,
+                    "type":   "location_update",
+                    "zone":   zone,
+                    "mode":   route.mode,
+                    "reason": route.reason,
                 })
-                # Welcome Home trigger
-                if zone == "home":
+                # Dorm tracker: entry/exit detection + return briefing
+                briefing = dorm_tracker.on_location_update(zone)
+                if briefing:
+                    await dispatcher.emit(briefing, Priority.HIGH)
+                if zone == "dorm":
+                    await dispatcher.emit({"type": "dorm_enter"}, Priority.HIGH)
+                # Welcome Home trigger (only outside dorm standby)
+                elif zone == "home":
                     person = data.get("person", "sir")
                     await handle_arrival(lat, lon, person=person, route=route,
                                          broadcast_fn=manager.broadcast_all,
-                                         voice_params=anger.voice_params)
+                                         voice_params=None)  # uses live gauge mapping
 
             elif msg_type == "reactor_toggle":
                 state.energy_saving = bool(data.get("energy_saving", False))

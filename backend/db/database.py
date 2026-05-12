@@ -156,6 +156,32 @@ class AcademySchedule(Base):
     notes       = Column(Text, nullable=True)
 
 
+class StudyPlan(Base):
+    __tablename__ = "study_plans"
+
+    id              = Column(Integer, primary_key=True)
+    subject         = Column(String(32))           # Math | English | Korean | …
+    topic           = Column(String(256))          # chapter / concept name
+    weakness_level  = Column(Integer, default=3)   # 1=strong … 5=critical weakness
+    exam_range      = Column(Text, nullable=True)  # exam scope description
+    target_date     = Column(String(10), nullable=True)  # YYYY-MM-DD
+    status          = Column(String(16), default="pending")  # pending|in_progress|mastered
+    notes           = Column(Text, nullable=True)
+    created_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class DormLog(Base):
+    """Records each dormitory stay (entry + exit) for the weekly briefing."""
+    __tablename__ = "dorm_logs"
+
+    id            = Column(Integer, primary_key=True)
+    entered_at    = Column(DateTime)
+    exited_at     = Column(DateTime, nullable=True)
+    duration_hrs  = Column(Float, nullable=True)
+    briefing_sent = Column(Boolean, default=False)
+
+
 # ── Init ──────────────────────────────────────────────────────────────────────
 
 def init_db() -> bool:
