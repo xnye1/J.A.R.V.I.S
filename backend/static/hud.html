@@ -1052,11 +1052,23 @@ reg('intelligence_update', m => {
 });
 
 reg('sysassist_update', m => {
-  const d = m.data || {};
-  const el = document.getElementById('svc-sys');
-  if (el) el.innerHTML =
-    `<span class="hi">${d.automations||0}</span> auto · <span class="${d.vulnerabilities>0?'al':'grn'}">${d.vulnerabilities||0} vuln</span>`;
+  const d    = m.data || {};
+  const el   = document.getElementById('svc-sys');
+  const card = document.getElementById('card-sys');
+  if (d.db_ok && d.voice_ok) {
+    if (el)   el.innerHTML = `<span class="grn">DB ✓</span> <span class="grn">VOICE ✓</span> <span class="grn">ACTIVE</span>`;
+    if (card) card.style.setProperty('--c', '#22c55e');
+  } else {
+    if (el) el.innerHTML =
+      `<span class="hi">${d.automations||0}</span> auto · <span class="${(d.vulnerabilities||0)>0?'al':'grn'}">${d.vulnerabilities||0} vuln</span>`;
+    if (card) card.style.removeProperty('--c');
+  }
   flashCard('card-sys');
+  if (d.startup_msg) {
+    addMsg('JARVIS', d.startup_msg, 'j');
+    addEvt('SYS ASSIST armed — Memory Core + Voice nominal', 'hi');
+    orbReact('ARMED', 3000);
+  }
 });
 
 reg('analysis_update', m => {

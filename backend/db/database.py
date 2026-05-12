@@ -1,0 +1,144 @@
+"""
+db/database.py — SQLAlchemy ORM models + engine factory.
+
+Default backend: SQLite (zero-config, lives in /app/jarvis.db inside Docker).
+To migrate to PostgreSQL or Oracle, change DATABASE_URL in .env — nothing else.
+
+  SQLite   : sqlite:///./jarvis.db           (default)
+  Postgres : postgresql://user:pass@host/db
+  Oracle   : oracle+oracledb://user:pass@host:port/service
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+
+from sqlalchemy import (
+    Boolean, Column, DateTime, Float, Integer, String, Text,
+    create_engine, text,
+)
+from sqlalchemy.orm import declarative_base, sessionmaker
+from datetime import datetime, timezone
+
+log = logging.getLogger("jarvis.db")
+
+DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./jarvis.db")
+
+_is_sqlite = DATABASE_URL.startswith("sqlite")
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False} if _is_sqlite else {},
+    pool_pre_ping=True,
+    echo=False,
+)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+
+# ── Tables ────────────────────────────────────────────────────────────────────
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String(36), index=True, default="default")
+    role       = Column(String(16))           # user | assistant | system
+    content    = Column(Text)
+    tokens_used = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class MemoryEntry(Base):
+    __tablename__ = "memory_entries"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    key          = Column(String(128), unique=True, index=True)
+    content      = Column(Text)
+    tags         = Column(Text, default="[]")  # JSON array as text
+    created_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    accessed_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    access_count = Column(Integer, default=0)
+
+
+class LocationLog(Base):
+    __tablename__ = "location_logs"
+
+    id          = Column(Integer, primary_key=True)
+    zone        = Column(String(32))           # home | academy | library | unknown
+    lat         = Column(Float, nullable=True)
+    lon         = Column(Float, nullable=True)
+    output_mode = Column(String(32))           # voice_phone | voice_genie | quiet | silent
+    person      = Column(String(32), default="sir")
+    recorded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class FuryHistory(Base):
+    __tablename__ = "fury_history"
+
+    id               = Column(Integer, primary_key=True)
+    gauge            = Column(Float)
+    stage            = Column(String(16))
+    dopamine_blocks  = Column(Integer, default=0)
+    efficiency       = Column(Float, default=100.0)
+    goal_fail_rate   = Column(Float, default=0.0)
+    sleep_deprived   = Column(Boolean, default=False)
+    recorded_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class Homework(Base):
+    __tablename__ = "homework"
+
+    id         = Column(Integer, primary_key=True)
+    subject    = Column(String(64))
+    title      = Column(String(256))
+    deadline   = Column(String(10), nullable=True)  # YYYY-MM-DD
+    status     = Column(String(16), default="pending")  # pending | done | late
+    priority   = Column(String(8),  default="normal")   # low | normal | high
+    notes      = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class DailySession(Base):
+    __tablename__ = "daily_sessions"
+
+    id               = Column(Integer, primary_key=True)
+    date             = Column(String(10), unique=True, index=True)  # YYYY-MM-DD
+    study_hours      = Column(Float,   default=0.0)
+    focus_sessions   = Column(Integer, default=0)
+    distraction_hits = Column(Integer, default=0)
+    messages_sent    = Column(Integer, default=0)
+    anger_peak       = Column(Float,   default=0.0)
+    anger_stage_peak = Column(String(16), default="GENTLE")
+    sleep_deprived   = Column(Boolean, default=False)
+    efficiency_score = Column(Float,   default=100.0)
+    goal_fail_rate   = Column(Float,   default=0.0)
+    created_at       = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class DeployLog(Base):
+    __tablename__ = "deploy_logs"
+
+    id          = Column(Integer, primary_key=True)
+    sha         = Column(String(7))
+    actor       = Column(String(64))
+    message     = Column(String(256))
+    failed      = Column(Boolean, default=False)
+    deployed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+# ── Init ──────────────────────────────────────────────────────────────────────
+
+def init_db() -> bool:
+    """Create all tables. Safe to call multiple times (CREATE IF NOT EXISTS)."""
+    try:
+        Base.metadata.create_all(bind=engine)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        log.info("Database ready — %s", DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL)
+        return True
+    except Exception as exc:
+        log.error("Database init failed: %s", exc)
+        return False

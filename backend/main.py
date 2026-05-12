@@ -35,6 +35,7 @@ from core.voice_bridge  import handle_arrival, speak
 from services           import ServiceRegistry
 from system.monitor     import ProactiveEngine, get_current_status
 import api.routes as routes
+from db.database import init_db
 
 STATIC = Path(__file__).parent / "static"
 
@@ -160,6 +161,9 @@ async def _fury_ticker() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
+    db_ready = init_db()
+    print(f"[JARVIS] Memory Core: {'online' if db_ready else 'FAILED — check DATABASE_URL'}.")
+
     dispatcher.set_broadcast(manager.broadcast_hud)
     routes.wire(manager, registry)
 

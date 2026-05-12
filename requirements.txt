@@ -18,5 +18,8 @@ httpx==0.27.0          # used by test_brain.py + anthropic SDK internally
 # ── Redis (conversation memory — optional, graceful fallback) ─
 redis==5.0.8
 
+# ── Database (SQLite default → PostgreSQL/Oracle via DATABASE_URL) ────────────
+sqlalchemy==2.0.30
+
 # ── [선택] Google Gemini — 추후 활성화 시 주석 해제 ───────────
 # google-generativeai==0.7.2
