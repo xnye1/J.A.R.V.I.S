@@ -3,18 +3,17 @@ name: JARVIS — Auto Deploy
 on:
   push:
     branches: [main]
-  workflow_dispatch:       # allow manual trigger from GitHub UI
+  workflow_dispatch:
 
 concurrency:
   group: deploy-production
-  cancel-in-progress: true  # cancel queued deploy if a newer push lands
+  cancel-in-progress: true
 
 env:
-  # Non-sensitive — already public in CLAUDE.md / codebase
   SERVER_IP:   "158.180.78.104"
   SERVER_USER: "ubuntu"
   SERVER_PORT: "8000"
-  REPO_DIR:    "/opt/jarvis"
+  DEPLOY_DIR:  "/opt/jarvis"
 
 jobs:
   deploy:
@@ -29,82 +28,71 @@ jobs:
         with:
           fetch-depth: 1
 
-      # ── 2. Validate required secret ───────────────────────────────────────────
-      - name: Check SSH key secret
+      # ── 2. Check secret ───────────────────────────────────────────────────────
+      - name: Check SSH secret
         run: |
-          if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
-            echo "::error::SSH_PRIVATE_KEY secret is not set."
-            echo "::error::Go to: https://github.com/${{ github.repository }}/settings/secrets/actions"
-            echo "::error::Add secret: SSH_PRIVATE_KEY = contents of your Oracle VM private key"
+          if [ -z "${{ secrets.JARVIS }}" ]; then
+            echo "::error::JARVIS secret (SSH private key) is not set."
             exit 1
           fi
-          echo "SSH_PRIVATE_KEY secret present — proceeding."
+          echo "Secret present — proceeding."
 
-      # ── 3. SSH deploy ─────────────────────────────────────────────────────────
-      - name: SSH → Pull & Rebuild
+      # ── 3. Upload files via SCP ───────────────────────────────────────────────
+      - name: Upload code to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host:     ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
+          key:      ${{ secrets.JARVIS }}
+          port:     22
+          source:   "backend/,docker-compose.yml,requirements.txt"
+          target:   ${{ env.DEPLOY_DIR }}
+          strip_components: 0
+          rm: false
+
+      # ── 4. Rebuild Docker on server ───────────────────────────────────────────
+      - name: Rebuild & restart
         uses: appleboy/ssh-action@v1.0.3
         with:
           host:     ${{ env.SERVER_IP }}
           username: ${{ env.SERVER_USER }}
-          key:      ${{ secrets.SSH_PRIVATE_KEY }}
+          key:      ${{ secrets.JARVIS }}
           port:     22
           timeout:  10m
           script: |
-            set -euo pipefail
-
-            echo "=== JARVIS Deploy: $(date -u) ==="
-            echo "Actor  : ${{ github.actor }}"
-            echo "Commit : ${{ github.sha }}"
-            echo "Msg    : ${{ github.event.head_commit.message }}"
-            echo "======================================="
-
+            set -e
             cd /opt/jarvis
+            echo "=== JARVIS Deploy: $(date -u) ==="
+            echo "Commit: ${{ github.sha }}"
+            echo "By:     ${{ github.actor }}"
 
-            # Pull latest code
-            git fetch --all --prune
-            git reset --hard origin/main
-
-            # Rebuild and restart containers
             sudo docker compose up -d --build --remove-orphans
-
-            # Remove dangling images to reclaim disk
             sudo docker image prune -f
+            sleep 6
+            sudo docker ps --format 'table {{.Names}}\t{{.Status}}'
+            echo "=== Done ==="
 
-            echo "=== Deploy OK: $(date -u) ==="
+      # ── 5. Health check ───────────────────────────────────────────────────────
+      - name: Health check
+        run: |
+          sleep 5
+          for i in 1 2 3; do
+            RESP=$(curl -sf --max-time 12 "http://${{ env.SERVER_IP }}:${{ env.SERVER_PORT }}/health" \
+                   || echo '{"alive":false}')
+            echo "[$i] $RESP"
+            echo "$RESP" | grep -q '"alive":true' && exit 0
+            sleep 8
+          done
+          echo "::error::Health check failed"
+          exit 1
 
-      # ── 4. Notify JARVIS HUD via webhook ──────────────────────────────────────
+      # ── 6. Notify HUD ─────────────────────────────────────────────────────────
       - name: Notify HUD
         if: success()
         run: |
-          sleep 5
-
-          WEBHOOK_SECRET="${{ secrets.DEPLOY_WEBHOOK_SECRET }}"
-
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST "http://${{ env.SERVER_IP }}:${{ env.SERVER_PORT }}/deploy-notify" \
-            -H "X-Deploy-Token: ${WEBHOOK_SECRET}" \
-            -H "Content-Type: application/json" \
-            --max-time 10 \
-            -d "{
-              \"commit\":  \"${{ github.sha }}\",
-              \"message\": \"SYSTEM UPDATED: ${{ github.event.head_commit.message }}\",
-              \"actor\":   \"${{ github.actor }}\"
-            }")
-
-          echo "HUD webhook HTTP status: ${HTTP_STATUS}"
-          [ "${HTTP_STATUS}" = "200" ] && echo "HUD notified OK." || echo "HUD notification skipped (server may be restarting)."
-
-      # ── 5. Failure notification ───────────────────────────────────────────────
-      - name: Notify HUD on failure
-        if: failure()
-        run: |
           curl -s -X POST "http://${{ env.SERVER_IP }}:${{ env.SERVER_PORT }}/deploy-notify" \
-            -H "X-Deploy-Token: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}" \
             -H "Content-Type: application/json" \
             --max-time 10 \
-            -d "{
-              \"commit\":  \"${{ github.sha }}\",
-              \"message\": \"DEPLOY FAILED — manual intervention required\",
-              \"actor\":   \"${{ github.actor }}\",
-              \"failed\":  true
-            }" || true
+            -d "{\"commit\":\"${{ github.sha }}\",\"message\":\"${{ github.event.head_commit.message }}\",\"actor\":\"${{ github.actor }}\"}" \
+            || echo "HUD notify skipped (non-critical)"
+          echo "Core system restored, Sir. All neural pathways nominal."
