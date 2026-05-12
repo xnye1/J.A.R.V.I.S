@@ -19,8 +19,10 @@ from api.models import (
 )
 from core.anger_engine  import anger
 from core.dispatcher    import dispatcher, Priority
+from core.fury_tracker  import fury
 from core.persona       import IDENTITY, JarvisPersona
 from core.state         import state
+from core.stealth       import classify_location, decide_output, FocusMode
 from core.system_info   import get_detailed_status, to_dict as status_to_dict
 from system.monitor     import get_current_status
 
@@ -220,3 +222,58 @@ async def anger_reset():
         **anger.snapshot(),
     }, Priority.HIGH)
     return {"status": "reset", **anger.snapshot()}
+
+
+# ── Fury Tracker ──────────────────────────────────────────────────────────────
+
+@router.get("/fury")
+async def fury_status():
+    """Phone session time + current anger gauge."""
+    return fury.status()
+
+
+# ── Stealth / Location ────────────────────────────────────────────────────────
+
+@router.post("/arrival")
+async def gps_arrival(lat: float, lon: float, person: str = "sir",
+                      airpods: bool = False, focus_mode: str = "none"):
+    """
+    REST alternative to the WS 'location' message.
+    Phone calls this when GPS updates — triggers stealth routing + Welcome Home.
+    """
+    zone  = classify_location(lat, lon)
+    route = decide_output(
+        location=zone,
+        focus_mode=FocusMode(focus_mode),
+        airpods_connected=airpods,
+        giga_genie_online=False,
+    )
+    result = {"zone": zone, "output_mode": route.mode, "reason": route.reason}
+
+    if zone == "home" and _manager:
+        from core.voice_bridge import handle_arrival
+        arrival = await handle_arrival(
+            lat, lon, person=person, route=route,
+            broadcast_fn=_manager.broadcast_all,
+            voice_params=anger.voice_params,
+        )
+        result.update(arrival)
+
+    if _manager:
+        await dispatcher.emit({"type": "location_update", **result}, Priority.NORMAL)
+
+    return result
+
+
+@router.get("/stealth")
+async def stealth_info(lat: float = 0.0, lon: float = 0.0,
+                       focus_mode: str = "none", airpods: bool = False):
+    """Preview the routing decision for given context without triggering actions."""
+    zone  = classify_location(lat, lon) if lat or lon else "unknown"
+    route = decide_output(
+        location=zone,
+        focus_mode=FocusMode(focus_mode),
+        airpods_connected=airpods,
+        giga_genie_online=False,
+    )
+    return {"zone": zone, "output_mode": route.mode, "reason": route.reason}

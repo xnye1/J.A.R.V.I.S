@@ -24,13 +24,16 @@ _KEY        = os.getenv("ANTHROPIC_API_KEY", "")
 _SIMULATION = not _KEY or not _KEY.startswith("sk-ant-")
 print(f"[JARVIS] {'Simulation' if _SIMULATION else 'Full'} mode.")
 
-from core.anger_engine import anger
-from core.dispatcher  import dispatcher, Priority
-from core.persona     import JarvisPersona
-from core.state       import state
-from core.system_info import get_detailed_status
-from services         import ServiceRegistry
-from system.monitor   import ProactiveEngine, get_current_status
+from core.anger_engine  import anger
+from core.dispatcher    import dispatcher, Priority
+from core.fury_tracker  import fury
+from core.persona       import JarvisPersona
+from core.state         import state
+from core.stealth       import classify_location, decide_output, FocusMode
+from core.system_info   import get_detailed_status
+from core.voice_bridge  import handle_arrival, speak
+from services           import ServiceRegistry
+from system.monitor     import ProactiveEngine, get_current_status
 import api.routes as routes
 
 STATIC = Path(__file__).parent / "static"
@@ -135,11 +138,22 @@ async def _mock_service_broadcaster() -> None:
                     await dispatcher.emit(report, Priority.LOW)
             except Exception:
                 pass
-        # Broadcast anger engine state after all service reports are collected
-        # (services update the gauge inputs above, so this reflects fresh values)
         snap = anger.snapshot()
         priority = Priority.HIGH if snap["gauge"] >= 80 else Priority.LOW
         await dispatcher.emit({"type": "anger_update", **snap}, priority)
+
+
+async def _fury_ticker() -> None:
+    """Every 60 s: tick the FuryTracker and broadcast gauge to HUD."""
+    while True:
+        await asyncio.sleep(60)
+        focus_active = state.dopamine_guard_active
+        tick_result  = fury.tick(focus_active=focus_active)
+        if tick_result.get("active") and manager.hud_count > 0:
+            await manager.broadcast_hud({
+                "type":  "fury_tick",
+                **tick_result,
+            })
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -153,6 +167,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     t2 = asyncio.create_task(_status_broadcaster())
     t3 = asyncio.create_task(dispatcher.run())
     t4 = asyncio.create_task(_mock_service_broadcaster())
+    t5 = asyncio.create_task(_fury_ticker())
     await registry.start_all()
 
     print("[JARVIS] All systems nominal, Sir.")
@@ -161,7 +176,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     await registry.stop_all()
     proactive_engine.stop()
     dispatcher.stop()
-    for t in (t1, t2, t3, t4):
+    for t in (t1, t2, t3, t4, t5):
         t.cancel()
 
 
@@ -213,10 +228,12 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             })
         else:
             manager.remote.append(ws)
+            fury.on_connect()
             await ws.send_json({"type": "connected", "device": "remote",
                                 "simulation_mode": _SIMULATION})
             await manager.broadcast_hud({"type": "remote_connected",
-                                         "count": manager.remote_count})
+                                         "count": manager.remote_count,
+                                         "fury":  fury.status()})
 
         while True:
             data     = await ws.receive_json()
@@ -226,6 +243,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 text = data.get("message", "").strip()
                 if not text:
                     continue
+                fury.on_message(focus_active=state.dopamine_guard_active)
                 await manager.broadcast_hud({"type": "remote_speaking", "message": text})
                 await dispatcher.emit({"type": "orb_react", "intensity": 0.6, "duration": 500},
                                       Priority.NORMAL)
@@ -244,6 +262,31 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
             elif msg_type == "remote_status":
                 await manager.broadcast_hud({"type": "remote_status", **data})
+
+            elif msg_type == "location":
+                # Phone GPS update → stealth routing + Welcome Home
+                lat  = float(data.get("lat", 0))
+                lon  = float(data.get("lon", 0))
+                zone = classify_location(lat, lon)
+                fm   = FocusMode(data.get("focus_mode", "none"))
+                route = decide_output(
+                    location=zone,
+                    focus_mode=fm,
+                    airpods_connected=bool(data.get("airpods", False)),
+                    giga_genie_online=False,
+                )
+                await manager.broadcast_hud({
+                    "type":     "location_update",
+                    "zone":     zone,
+                    "mode":     route.mode,
+                    "reason":   route.reason,
+                })
+                # Welcome Home trigger
+                if zone == "home":
+                    person = data.get("person", "sir")
+                    await handle_arrival(lat, lon, person=person, route=route,
+                                         broadcast_fn=manager.broadcast_all,
+                                         voice_params=anger.voice_params)
 
             elif msg_type == "reactor_toggle":
                 state.energy_saving = bool(data.get("energy_saving", False))
@@ -274,5 +317,6 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         manager._drop(ws)
         if device == "remote":
+            fury.on_disconnect()
             await manager.broadcast_hud({"type": "remote_disconnected",
                                          "count": manager.remote_count})
