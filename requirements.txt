@@ -20,6 +20,7 @@ redis==5.0.8
 
 # ── Database (SQLite default → PostgreSQL/Oracle via DATABASE_URL) ────────────
 sqlalchemy==2.0.30
+tzdata                 # IANA timezone data for zoneinfo (required on slim Docker images)
 
 # ── [선택] Google Gemini — 추후 활성화 시 주석 해제 ───────────
 # google-generativeai==0.7.2

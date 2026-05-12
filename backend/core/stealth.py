@@ -1,21 +1,31 @@
 """
 core/stealth.py — Context-aware output suppression & location routing.
 
-Decision tree:
-  location in STEALTH_ZONES         → SILENT  (vibrate only)
-  focus_mode == sleep               → SILENT
-  focus_mode in (dnd, work)         → QUIET   (text only)
-  airpods_connected                 → VOICE_PHONE
-  giga_genie_online AND home        → VOICE_GENIE
-  default                           → VOICE_PHONE
+Priority order (highest → lowest):
+  1. Academy class in session (time-based KST schedule) → SILENT
+  2. GPS in STEALTH_ZONES (academy / library geofence)  → SILENT
+  3. focus_mode == sleep                                 → SILENT
+  4. focus_mode in (dnd, work)                          → QUIET
+  5. AirPods connected                                   → VOICE_PHONE
+  6. GiGA Genie online + home                            → VOICE_GENIE
+  7. Default                                             → VOICE_PHONE
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import datetime
+from datetime import time as dtime
 from enum import Enum
 from math import asin, cos, radians, sin, sqrt
+
+try:
+    from zoneinfo import ZoneInfo as _ZI
+    _KST = _ZI("Asia/Seoul")
+except Exception:
+    from datetime import timezone, timedelta
+    _KST = timezone(timedelta(hours=9))   # type: ignore[assignment]
 
 
 class OutputMode(str, Enum):
@@ -30,6 +40,36 @@ class FocusMode(str, Enum):
     DND   = "dnd"
     SLEEP = "sleep"
     WORK  = "work"
+
+
+# ── Academy schedule (KST, repeating weekly) ─────────────────────────────────
+# Tuple: (day_of_week, start, end, label)  — day 0=Mon … 4=Fri 5=Sat 6=Sun
+
+_ACADEMY_HOURS: tuple[tuple[int, dtime, dtime, str], ...] = (
+    (4, dtime(19, 40), dtime(21, 20), "math_fri"),      # Friday math
+    (5, dtime(9,  30), dtime(12, 10), "english_sat"),   # Saturday English
+    (5, dtime(13, 30), dtime(16,  0), "math_sat"),      # Saturday Math
+    (6, dtime(14, 30), dtime(16, 30), "math_sun"),      # Sunday Math (optional)
+)
+
+
+def is_academy_hour(dt: datetime | None = None) -> bool:
+    """True if current KST time falls within a scheduled academy class."""
+    now = dt or datetime.now(_KST)
+    dow = now.weekday()
+    t   = now.time().replace(second=0, microsecond=0)
+    return any(dow == d and s <= t <= e for d, s, e, _ in _ACADEMY_HOURS)
+
+
+def current_academy_session(dt: datetime | None = None) -> str | None:
+    """Returns session label if in an academy hour, else None."""
+    now = dt or datetime.now(_KST)
+    dow = now.weekday()
+    t   = now.time().replace(second=0, microsecond=0)
+    for d, s, e, label in _ACADEMY_HOURS:
+        if dow == d and s <= t <= e:
+            return label
+    return None
 
 
 # ── Geofence config (from .env) ───────────────────────────────────────────────
@@ -81,21 +121,32 @@ def decide_output(
     focus_mode: FocusMode   = FocusMode.NONE,
     airpods_connected: bool = False,
     giga_genie_online: bool = False,
+    dt: datetime | None     = None,   # inject for testing
 ) -> RouteDecision:
     """Pure function — no side effects. Returns routing decision."""
 
+    # ① Academy schedule takes absolute priority (time-based)
+    session = current_academy_session(dt)
+    if session:
+        return RouteDecision(OutputMode.SILENT, f"academy class: {session}")
+
+    # ② GPS-based stealth zones
     if location in STEALTH_ZONES:
         return RouteDecision(OutputMode.SILENT, f"stealth zone: {location}")
 
+    # ③ Sleep mode
     if focus_mode == FocusMode.SLEEP:
         return RouteDecision(OutputMode.SILENT, "sleep mode")
 
+    # ④ DND / Work focus
     if focus_mode in (FocusMode.DND, FocusMode.WORK):
         return RouteDecision(OutputMode.QUIET, f"focus mode: {focus_mode.value}")
 
+    # ⑤ AirPods
     if airpods_connected:
         return RouteDecision(OutputMode.VOICE_PHONE, "AirPods connected")
 
+    # ⑥ GiGA Genie at home
     if giga_genie_online and location == "home":
         return RouteDecision(OutputMode.VOICE_GENIE, "home + GiGA Genie online")
 

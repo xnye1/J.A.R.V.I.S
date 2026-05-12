@@ -129,6 +129,33 @@ class DeployLog(Base):
     deployed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class Goal(Base):
+    __tablename__ = "goals"
+
+    id         = Column(Integer, primary_key=True)
+    title      = Column(String(256), unique=True, index=True)
+    category   = Column(String(32))              # study | habit | lifestyle | health
+    deadline   = Column(String(10), nullable=True)  # YYYY-MM-DD
+    status     = Column(String(16), default="active")  # active | completed | failed | deferred
+    priority   = Column(Integer,   default=2)    # 1=highest, 2=normal, 3=low
+    progress   = Column(Float,     default=0.0)  # 0.0–1.0
+    created_at = Column(DateTime,  default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime,  default=lambda: datetime.now(timezone.utc))
+
+
+class AcademySchedule(Base):
+    __tablename__ = "academy_schedules"
+
+    id          = Column(Integer, primary_key=True)
+    day_of_week = Column(Integer)       # 0=Mon … 6=Sun
+    day_name    = Column(String(16))    # human label
+    start_time  = Column(String(5))     # "HH:MM" KST
+    end_time    = Column(String(5))     # "HH:MM" KST
+    subject     = Column(String(32))    # Math | English | …
+    is_optional = Column(Boolean, default=False)
+    notes       = Column(Text, nullable=True)
+
+
 # ── Init ──────────────────────────────────────────────────────────────────────
 
 def init_db() -> bool:

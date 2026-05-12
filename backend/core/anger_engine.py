@@ -163,9 +163,9 @@ class AngerEngine:
 
     # ── Input setters ─────────────────────────────────────────────────────────
 
-    def record_dopamine_block(self) -> None:
-        """Increment distraction counter and recalculate gauge."""
-        self._dopamine_blocks += 1
+    def record_dopamine_block(self, amount: int = 1) -> None:
+        """Increment distraction counter. amount=2 during academy hours (2× weight)."""
+        self._dopamine_blocks += max(1, int(amount))
         self._recalculate()
 
     def update_efficiency(self, score: float) -> None:

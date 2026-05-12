@@ -36,6 +36,7 @@ from services           import ServiceRegistry
 from system.monitor     import ProactiveEngine, get_current_status
 import api.routes as routes
 from db.database import init_db
+from db.seed import seed_initial_data
 
 STATIC = Path(__file__).parent / "static"
 
@@ -163,6 +164,8 @@ async def _fury_ticker() -> None:
 async def lifespan(app: FastAPI) -> AsyncGenerator:
     db_ready = init_db()
     print(f"[JARVIS] Memory Core: {'online' if db_ready else 'FAILED — check DATABASE_URL'}.")
+    if db_ready:
+        seed_initial_data()
 
     dispatcher.set_broadcast(manager.broadcast_hud)
     routes.wire(manager, registry)
