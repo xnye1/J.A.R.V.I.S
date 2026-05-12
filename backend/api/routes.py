@@ -17,6 +17,7 @@ from api.models import (
     FocusRequest, GigaGenieRequest, ReactorRequest,
     RememberRequest, RecallRequest,
 )
+from core.anger_engine  import anger
 from core.dispatcher    import dispatcher, Priority
 from core.persona       import IDENTITY, JarvisPersona
 from core.state         import state
@@ -201,3 +202,21 @@ async def memory_stats():
     from services.memory_service import MemoryService
     svc: MemoryService | None = _registry.get("memory_service") if _registry else None
     return svc.stats() if svc else {"error": "unavailable"}
+
+
+# ── Anger Engine ──────────────────────────────────────────────────────────────
+
+@router.get("/anger")
+async def anger_status():
+    """Current anger gauge snapshot — gauge, stage, voice params, inputs."""
+    return anger.snapshot()
+
+@router.post("/anger/reset")
+async def anger_reset():
+    """Reset anger gauge to zero (all inputs cleared)."""
+    anger.reset()
+    await dispatcher.emit({
+        "type":  "anger_update",
+        **anger.snapshot(),
+    }, Priority.HIGH)
+    return {"status": "reset", **anger.snapshot()}

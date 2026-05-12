@@ -28,6 +28,7 @@ from typing import Any
 import psutil
 
 from core.dispatcher import Priority
+from core.anger_engine import anger
 from services.base_service import BaseService
 
 log = logging.getLogger("jarvis.dopamine_guard")
@@ -231,6 +232,9 @@ class DopamineGuard(BaseService):
         names = ", ".join(detected)
         remaining = round(self._session.remaining_minutes, 1)
 
+        # Feed anger engine — every block raises the gauge
+        anger.record_dopamine_block()
+
         await self._emit({
             "type":    "dopamine_alert",
             "message": (
@@ -239,4 +243,6 @@ class DopamineGuard(BaseService):
             ),
             "detected":  detected,
             "remaining": remaining,
+            "anger_gauge": anger.gauge,
+            "anger_stage": anger.profile.name,
         }, Priority.HIGH)

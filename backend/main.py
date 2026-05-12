@@ -24,6 +24,7 @@ _KEY        = os.getenv("ANTHROPIC_API_KEY", "")
 _SIMULATION = not _KEY or not _KEY.startswith("sk-ant-")
 print(f"[JARVIS] {'Simulation' if _SIMULATION else 'Full'} mode.")
 
+from core.anger_engine import anger
 from core.dispatcher  import dispatcher, Priority
 from core.persona     import JarvisPersona
 from core.state       import state
@@ -134,6 +135,11 @@ async def _mock_service_broadcaster() -> None:
                     await dispatcher.emit(report, Priority.LOW)
             except Exception:
                 pass
+        # Broadcast anger engine state after all service reports are collected
+        # (services update the gauge inputs above, so this reflects fresh values)
+        snap = anger.snapshot()
+        priority = Priority.HIGH if snap["gauge"] >= 80 else Priority.LOW
+        await dispatcher.emit({"type": "anger_update", **snap}, priority)
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────

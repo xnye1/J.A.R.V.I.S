@@ -332,6 +332,26 @@ body::after {
 }
 #b-integrity { font-family:'Orbitron',sans-serif; font-size:12px !important; }
 
+/* Fury chip */
+.fury-chip { position:relative; overflow:hidden; }
+.fury-stage { font-size:8px; letter-spacing:1.5px; color:var(--grn); margin-top:1px; transition:color .4s; }
+.fury-bar-track {
+  position:absolute; bottom:0; left:0; right:0;
+  height:3px; background:rgba(239,68,68,.08); border-radius:0 0 8px 8px;
+}
+#fury-fill {
+  height:100%; width:0%; background:var(--grn);
+  box-shadow:0 0 6px var(--grn);
+  transition:width .8s, background .4s, box-shadow .4s;
+  border-radius:0 0 8px 8px;
+}
+#b-fury { font-family:'Orbitron',sans-serif; font-size:12px !important; }
+@keyframes lockdown-pulse {
+  0%,100% { box-shadow:0 0 10px rgba(239,68,68,.3); border-color:rgba(239,68,68,.45); }
+  50%     { box-shadow:0 0 28px rgba(239,68,68,.75); border-color:rgba(239,68,68,.85); }
+}
+.fury-chip.lockdown { animation:lockdown-pulse 1.4s ease-in-out infinite; }
+
 /* ── Reactor switch ── */
 .reactor-wrap {
   display:flex; align-items:center; gap:8px; margin-top:6px; padding-top:8px;
@@ -621,6 +641,12 @@ body.static-mode #orb {
     <strong id="b-integrity">100%</strong>
     <div class="integrity-bar-track"><div id="integrity-fill"></div></div>
   </div>
+  <div class="bchip fury-chip" id="fury-chip">
+    FURY GAUGE
+    <strong id="b-fury">0%</strong>
+    <div class="fury-stage" id="fury-stage">COMPOSED</div>
+    <div class="fury-bar-track"><div id="fury-fill"></div></div>
+  </div>
   <div id="sim-warn">&#9888; SIMULATION MODE — KEY PENDING 16th</div>
 </div>
 
@@ -629,6 +655,7 @@ body.static-mode #orb {
 <script>
 const WS = `ws://${location.host}/ws`;
 let ws, pingAt, latMs = 0, msgCnt = 0, startMs = Date.now(), orbTimer;
+let prevFuryStage = 'GENTLE';
 
 /* ── Clock + Uptime ── */
 function tick() {
@@ -1038,6 +1065,40 @@ reg('analysis_update', m => {
   if (el) el.innerHTML =
     `<span class="hi">${escHtml(d.mood||'--')}</span> · <span class="${d.stress==='High'||d.stress==='Elevated'?'al':'grn'}">${escHtml(d.stress||'--')}</span> · CL <span class="${d.cog_level==='High'?'al':d.cog_level==='Medium'?'md':'grn'}">${d.cog_load_pct||'--'}%</span>`;
   flashCard('card-mood');
+});
+
+/* ── Anger / Fury Gauge ── */
+reg('anger_update', m => {
+  const pct    = m.gauge   || 0;
+  const stage  = m.stage   || 'GENTLE';
+  const label  = m.label   || 'Composed';
+  const color  = pct >= 80 ? 'var(--red)'
+               : pct >= 60 ? '#ff6b35'
+               : pct >= 40 ? 'var(--ylw)'
+               : pct >= 20 ? '#90ee90'
+               : 'var(--grn)';
+  const shadow = pct >= 60 ? '#ef4444' : '#22c55e';
+
+  const chip  = document.getElementById('fury-chip');
+  const bFury = document.getElementById('b-fury');
+  const fill  = document.getElementById('fury-fill');
+  const stEl  = document.getElementById('fury-stage');
+
+  if (bFury) { bFury.textContent = pct + '%'; bFury.style.color = color; }
+  if (fill)  { fill.style.width = pct + '%'; fill.style.background = color; fill.style.boxShadow = `0 0 8px ${shadow}`; }
+  if (stEl)  { stEl.textContent = label; stEl.style.color = color; }
+  if (chip)  { chip.classList.toggle('lockdown', stage === 'LOCKDOWN'); }
+
+  if (stage === 'LOCKDOWN' && prevFuryStage !== 'LOCKDOWN') {
+    flash(); flash();
+    addMsg('JARVIS', '[FURY PROTOCOL] LOCKDOWN engaged. Performance threshold breached. Awaiting corrective commitment, Sir.', 'a');
+    addAlert('FURY LOCKDOWN — gauge at ' + pct + '%');
+    orbReact('LOCKDOWN', 6000);
+    addEvt('⚠ FURY LOCKDOWN ENGAGED — gauge ' + pct + '%', 'al');
+  } else if (stage !== 'GENTLE' && prevFuryStage === 'GENTLE') {
+    addEvt('Fury gauge rising: ' + stage + ' (' + pct + '%)', 'al');
+  }
+  prevFuryStage = stage;
 });
 
 connect();

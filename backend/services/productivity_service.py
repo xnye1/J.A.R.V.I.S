@@ -15,6 +15,7 @@ from __future__ import annotations
 import random
 from typing import Any
 
+from core.anger_engine import anger
 from services.base_service import BaseService
 
 # ── Mock pools ────────────────────────────────────────────────────────────────
@@ -97,6 +98,13 @@ class ProductivityService(BaseService):
         board = self.get_task_board()
         focus = self.get_focus_score()
         goals = self.get_goal_tracker()
+
+        # Feed anger engine — efficiency from focus score, failure from task completion
+        efficiency = float(focus["score"])
+        goal_fail  = round(1.0 - board["completion_pct"] / 100.0, 3)
+        anger.update_efficiency(efficiency)
+        anger.update_goal_fail_rate(goal_fail)
+
         return {
             "type": "productivity_update",
             "data": {

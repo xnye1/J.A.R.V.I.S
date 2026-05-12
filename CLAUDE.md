@@ -133,6 +133,8 @@ Toggle via: HUD switch · Remote switch · `POST /reactor` · WS `reactor_toggle
 | Persona | Hybrid-Adaptive identity engine — 4-mode behavioral matrix, domain awareness | `core/persona.py` — `IDENTITY` dict, `SYSTEM_PROMPT`, `GET /persona` |
 | 15 | Modular architecture — state singleton, priority dispatcher, service layer, Widget Registry HUD | `core/state.py`, `core/dispatcher.py`, `services/`, `api/`, `main.py` refactor |
 | 15 (skeleton) | 5 mock service files, 10-s broadcaster, HUD service status bar (5 chips) | `services/study|productivity|intelligence|system|analysis_service.py`, `main.py _mock_service_broadcaster`, `hud.html #svc-bar` |
+| 15.5 | Stark HUD visual overhaul — Orbitron font, neon glow panels, service cards (FA icons), dataPing orb ripple, val-flash telemetry, System Integrity gauge | `static/hud.html` full CSS/JS rewrite |
+| 15.6 | Progressive Personality Escalation — AngerEngine singleton, 5-stage tone (Gentle→Lockdown), ElevenLabs voice params, gauge broadcasts, HUD Fury chip | `core/anger_engine.py`, `core/persona.py`, `services/dopamine_guard.py`, `services/productivity_service.py`, `api/routes.py`, `main.py`, `static/hud.html` |
 
 ### Phase 11.2 Deliverables (latest)
 
@@ -151,6 +153,27 @@ Toggle via: HUD switch · Remote switch · `POST /reactor` · WS `reactor_toggle
 
 **Required GitHub Secrets** (see setup guide below):
 `SERVER_IP`, `SERVER_USER`, `SSH_PRIVATE_KEY`, `DEPLOY_WEBHOOK_SECRET`
+
+### Phase 15.6 — Anger Engine (new)
+
+- **`backend/core/anger_engine.py`** — `AngerEngine` singleton. Gauge formula: 40% efficiency deficit + 25% goal fail rate + 25% dopamine blocks (cap 8→100%) + 10% sleep penalty. 5 `ToneStage` levels (GENTLE/SARCASTIC/STERN/FURIOUS/LOCKDOWN). Each stage carries a system-prompt tone directive and ElevenLabs voice params (Stability 0.75→0.15, Similarity 0.85→0.95, Style 0.0→1.0).
+- **`backend/core/persona.py`** — `_build_system_prompt()` appends `anger.profile.tone_directive` to base `SYSTEM_PROMPT`. Simulation mode response includes current stage/gauge. `proactive_alert()` also tone-adjusted.
+- **`backend/services/dopamine_guard.py`** — `_fire_distraction_alert()` calls `anger.record_dopamine_block()` on every distraction event.
+- **`backend/services/productivity_service.py`** — `mock_report()` calls `anger.update_efficiency(focus_score)` and `anger.update_goal_fail_rate(1 - completion_pct/100)`.
+- **`backend/api/routes.py`** — `GET /anger` (snapshot) + `POST /anger/reset` (full reset + broadcast).
+- **`backend/main.py`** — `_mock_service_broadcaster()` emits `anger_update` WS event after each service round (HIGH priority at LOCKDOWN, LOW otherwise).
+- **`backend/static/hud.html`** — Fury chip in bottom bar (gauge %, stage label, color-coded fill bar, `lockdown-pulse` CSS animation). `anger_update` WR handler: LOCKDOWN triggers double-flash + red orb + event log alert.
+
+### WebSocket additions (Phase 15.6)
+| Message type | Direction | Description |
+|---|---|---|
+| `anger_update` | server→hud | Anger gauge snapshot every 10 s (stage, gauge %, voice_params, inputs) |
+
+### REST additions (Phase 15.6)
+| Method | Path | Description |
+|---|---|---|
+| GET | `/anger` | Live anger gauge snapshot |
+| POST | `/anger/reset` | Reset gauge + broadcast to HUD |
 
 ### Pending / Next Phase
 

@@ -8,6 +8,7 @@ import uuid
 import anthropic
 from dotenv import load_dotenv
 from core import memory
+from core.anger_engine import anger
 
 load_dotenv()
 
@@ -105,9 +106,15 @@ class JarvisPersona:
         self._local_history = history
         memory.save(self.session_id, history)
 
+    def _build_system_prompt(self) -> str:
+        """Base prompt + current anger tone directive."""
+        return SYSTEM_PROMPT + anger.profile.tone_directive
+
     def chat(self, user_message: str) -> str:
         if SIMULATION_MODE:
-            return SIMULATION_MSG
+            stage = anger.profile
+            suffix = f" [TONE STAGE: {stage.name} — Gauge {anger.gauge}%]" if stage.name != "GENTLE" else ""
+            return SIMULATION_MSG + suffix
 
         history = self._get_history()
         history.append({"role": "user", "content": user_message})
@@ -116,7 +123,7 @@ class JarvisPersona:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=1024,
-                system=SYSTEM_PROMPT,
+                system=self._build_system_prompt(),
                 messages=history,
             )
             reply = response.content[0].text
@@ -132,19 +139,25 @@ class JarvisPersona:
         return reply
 
     def proactive_alert(self, alert_context: str) -> str:
-        """Generate a context-aware proactive alert — Data Protocol mode."""
+        """Generate a context-aware proactive alert — tone-adjusted."""
         if SIMULATION_MODE:
             return f"[JARVIS ALERT] {alert_context}"
+
+        stage = anger.stage
+        tone_note = (
+            f" Apply {anger.profile.name} tone — controlled intensity, direct language."
+            if stage.value >= 2 else ""
+        )
 
         try:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=200,
-                system=SYSTEM_PROMPT,
+                system=self._build_system_prompt(),
                 messages=[{"role": "user", "content": (
                     f"Proactive system alert required. Context: {alert_context}. "
-                    f"Report in Data Protocol mode — no sentiment, just facts and the "
-                    f"recommended immediate action. Prefix with [JARVIS ALERT]."
+                    f"Report in Data Protocol mode — no sentiment, facts and immediate action only. "
+                    f"Prefix with [JARVIS ALERT].{tone_note}"
                 )}],
             )
             return response.content[0].text
