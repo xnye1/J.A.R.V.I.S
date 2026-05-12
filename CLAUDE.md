@@ -2,6 +2,8 @@
 
 > Claude: Read this before every task. Update [Current Progress] at the end of every Phase.
 
+> **DEPLOY RULE**: 코드/파일 수정 작업이 끝나면 **확인 없이 자동으로** `git add → git commit → git push origin main` 까지 진행하라. GitHub Actions가 Oracle 서버에 자동 배포한다. 사용자에게 "배포할까요?" 같은 확인 질문 금지.
+
 ---
 
 ## Infrastructure
