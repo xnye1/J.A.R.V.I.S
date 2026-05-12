@@ -45,7 +45,7 @@ jobs:
           scp -i ~/.ssh/deploy_key -r \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=~/.ssh/known_hosts \
-            backend/ docker-compose.yml requirements.txt \
+            backend docker-compose.yml requirements.txt \
             ${{ env.SERVER_USER }}@${{ env.SERVER_IP }}:${{ env.DEPLOY_DIR }}/
           echo "✅ Files uploaded"
 

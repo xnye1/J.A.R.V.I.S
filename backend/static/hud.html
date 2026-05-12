@@ -1101,6 +1101,47 @@ reg('anger_update', m => {
   prevFuryStage = stage;
 });
 
+reg('fury_tick', m => {
+  if (!m.active) return;
+  WR['anger_update'] && WR['anger_update']({
+    gauge: m.anger_gauge || 0,
+    stage: m.anger_stage || 'GENTLE',
+    label: m.anger_stage || 'GENTLE',
+  });
+});
+
+reg('location_update', m => {
+  const zone = (m.zone || 'unknown').toUpperCase();
+  const mode = m.output_mode || m.mode || '--';
+  const cls  = zone === 'HOME' ? 'hi' : zone === 'UNKNOWN' ? '' : 'al';
+  addEvt(`Location: ${zone} — Output: ${mode}`, cls);
+});
+
+reg('haptic', m => {
+  addEvt(`Haptic signal: ${m.pattern || 'pulse'} (${m.reason || 'stealth mode'})`, 'al');
+  orbReact('STEALTH', 1200);
+});
+
+reg('notification', m => {
+  if (m.text) addMsg('NOTIFICATION', m.text, 's');
+  addEvt(`Silent notification sent`, '');
+});
+
+reg('tts_audio', m => {
+  if (m.text) { addMsg('JARVIS VOICE', m.text, 'j'); addEvt('TTS audio: ElevenLabs', 'hi'); }
+  if (m.audio_b64) {
+    try {
+      const a = new Audio('data:audio/mpeg;base64,' + m.audio_b64);
+      a.play().catch(() => {});
+    } catch(_) {}
+  }
+});
+
+reg('tts_text_fallback', m => {
+  if (m.text) addMsg('JARVIS VOICE', m.text, 'j');
+  addEvt('TTS fallback: no ElevenLabs key', 'al');
+});
+
 connect();
 
 /* ── Data Cascade ── */
