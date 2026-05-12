@@ -9,6 +9,13 @@ concurrency:
   group: deploy-production
   cancel-in-progress: true  # cancel queued deploy if a newer push lands
 
+env:
+  # Non-sensitive — already public in CLAUDE.md / codebase
+  SERVER_IP:   "158.180.78.104"
+  SERVER_USER: "ubuntu"
+  SERVER_PORT: "8000"
+  REPO_DIR:    "/opt/jarvis"
+
 jobs:
   deploy:
     name: Deploy to Oracle Server
@@ -16,18 +23,29 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      # ── 1. Checkout (for commit metadata only — actual deploy is remote) ────
+      # ── 1. Checkout ───────────────────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      # ── 2. SSH deploy ────────────────────────────────────────────────────────
+      # ── 2. Validate required secret ───────────────────────────────────────────
+      - name: Check SSH key secret
+        run: |
+          if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "::error::SSH_PRIVATE_KEY secret is not set."
+            echo "::error::Go to: https://github.com/${{ github.repository }}/settings/secrets/actions"
+            echo "::error::Add secret: SSH_PRIVATE_KEY = contents of your Oracle VM private key"
+            exit 1
+          fi
+          echo "SSH_PRIVATE_KEY secret present — proceeding."
+
+      # ── 3. SSH deploy ─────────────────────────────────────────────────────────
       - name: SSH → Pull & Rebuild
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host:     ${{ secrets.SERVER_IP }}
-          username: ${{ secrets.SERVER_USER }}
+          host:     ${{ env.SERVER_IP }}
+          username: ${{ env.SERVER_USER }}
           key:      ${{ secrets.SSH_PRIVATE_KEY }}
           port:     22
           timeout:  10m
@@ -54,49 +72,39 @@ jobs:
 
             echo "=== Deploy OK: $(date -u) ==="
 
-      # ── 3. Notify JARVIS HUD via webhook ────────────────────────────────────
+      # ── 4. Notify JARVIS HUD via webhook ──────────────────────────────────────
       - name: Notify HUD
         if: success()
-        env:
-          SERVER_IP:             ${{ secrets.SERVER_IP }}
-          DEPLOY_WEBHOOK_SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
-          COMMIT_SHA:            ${{ github.sha }}
-          COMMIT_MSG:            ${{ github.event.head_commit.message }}
-          ACTOR:                 ${{ github.actor }}
         run: |
-          # Give the container ~5 s to finish restarting before sending the webhook
           sleep 5
 
+          WEBHOOK_SECRET="${{ secrets.DEPLOY_WEBHOOK_SECRET }}"
+
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST "http://${SERVER_IP}:8000/deploy-notify" \
-            -H "X-Deploy-Token: ${DEPLOY_WEBHOOK_SECRET}" \
+            -X POST "http://${{ env.SERVER_IP }}:${{ env.SERVER_PORT }}/deploy-notify" \
+            -H "X-Deploy-Token: ${WEBHOOK_SECRET}" \
             -H "Content-Type: application/json" \
             --max-time 10 \
             -d "{
-              \"commit\":  \"${COMMIT_SHA}\",
-              \"message\": \"${COMMIT_MSG}\",
-              \"actor\":   \"${ACTOR}\"
+              \"commit\":  \"${{ github.sha }}\",
+              \"message\": \"SYSTEM UPDATED: ${{ github.event.head_commit.message }}\",
+              \"actor\":   \"${{ github.actor }}\"
             }")
 
           echo "HUD webhook HTTP status: ${HTTP_STATUS}"
-          # Don't fail the workflow if HUD is temporarily unreachable
           [ "${HTTP_STATUS}" = "200" ] && echo "HUD notified OK." || echo "HUD notification skipped (server may be restarting)."
 
-      # ── 4. Failure notification ──────────────────────────────────────────────
+      # ── 5. Failure notification ───────────────────────────────────────────────
       - name: Notify HUD on failure
         if: failure()
-        env:
-          SERVER_IP:             ${{ secrets.SERVER_IP }}
-          DEPLOY_WEBHOOK_SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
-          ACTOR:                 ${{ github.actor }}
         run: |
-          curl -s -X POST "http://${SERVER_IP}:8000/deploy-notify" \
-            -H "X-Deploy-Token: ${DEPLOY_WEBHOOK_SECRET}" \
+          curl -s -X POST "http://${{ env.SERVER_IP }}:${{ env.SERVER_PORT }}/deploy-notify" \
+            -H "X-Deploy-Token: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}" \
             -H "Content-Type: application/json" \
             --max-time 10 \
             -d "{
               \"commit\":  \"${{ github.sha }}\",
               \"message\": \"DEPLOY FAILED — manual intervention required\",
-              \"actor\":   \"${ACTOR}\",
+              \"actor\":   \"${{ github.actor }}\",
               \"failed\":  true
             }" || true
