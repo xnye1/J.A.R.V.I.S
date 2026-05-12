@@ -28,49 +28,44 @@ jobs:
         with:
           fetch-depth: 1
 
-      # ── 2. Check secret ───────────────────────────────────────────────────────
-      - name: Check SSH secret
+      # ── 2. Setup SSH key (strip Windows CRLF — the #1 cause of auth failure) ──
+      - name: Setup SSH
         run: |
-          if [ -z "${{ secrets.JARVIS }}" ]; then
-            echo "::error::JARVIS secret (SSH private key) is not set."
-            exit 1
-          fi
-          echo "Secret present — proceeding."
+          mkdir -p ~/.ssh
+          # printf preserves exact content; tr -d '\r' kills CRLF
+          printf '%s' "${{ secrets.JARVIS }}" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ env.SERVER_IP }} >> ~/.ssh/known_hosts 2>/dev/null
+          # Verify key is valid
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null && echo "✅ Key valid" || (echo "❌ Key invalid — check JARVIS secret" && exit 1)
 
       # ── 3. Upload files via SCP ───────────────────────────────────────────────
-      - name: Upload code to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host:     ${{ env.SERVER_IP }}
-          username: ${{ env.SERVER_USER }}
-          key:      ${{ secrets.JARVIS }}
-          port:     22
-          source:   "backend/,docker-compose.yml,requirements.txt"
-          target:   ${{ env.DEPLOY_DIR }}
-          strip_components: 0
-          rm: false
+      - name: Upload code
+        run: |
+          scp -i ~/.ssh/deploy_key -r \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            backend/ docker-compose.yml requirements.txt \
+            ${{ env.SERVER_USER }}@${{ env.SERVER_IP }}:${{ env.DEPLOY_DIR }}/
+          echo "✅ Files uploaded"
 
-      # ── 4. Rebuild Docker on server ───────────────────────────────────────────
+      # ── 4. Rebuild Docker ─────────────────────────────────────────────────────
       - name: Rebuild & restart
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host:     ${{ env.SERVER_IP }}
-          username: ${{ env.SERVER_USER }}
-          key:      ${{ secrets.JARVIS }}
-          port:     22
-          timeout:  10m
-          script: |
-            set -e
-            cd /opt/jarvis
-            echo "=== JARVIS Deploy: $(date -u) ==="
-            echo "Commit: ${{ github.sha }}"
-            echo "By:     ${{ github.actor }}"
-
-            sudo docker compose up -d --build --remove-orphans
-            sudo docker image prune -f
-            sleep 6
-            sudo docker ps --format 'table {{.Names}}\t{{.Status}}'
-            echo "=== Done ==="
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            ${{ env.SERVER_USER }}@${{ env.SERVER_IP }} \
+            "set -e
+             echo '=== JARVIS Deploy: '\$(date -u)' ==='
+             echo 'Commit: ${{ github.sha }}'
+             echo 'By:     ${{ github.actor }}'
+             cd ${{ env.DEPLOY_DIR }}
+             sudo docker compose up -d --build --remove-orphans 2>&1 | tail -6
+             sudo docker image prune -f >/dev/null
+             sleep 6
+             sudo docker ps --format 'table {{.Names}}\t{{.Status}}'
+             echo '=== Done ==='"
 
       # ── 5. Health check ───────────────────────────────────────────────────────
       - name: Health check
@@ -83,16 +78,16 @@ jobs:
             echo "$RESP" | grep -q '"alive":true' && exit 0
             sleep 8
           done
-          echo "::error::Health check failed"
+          echo "::error::Health check failed after 3 attempts"
           exit 1
 
       # ── 6. Notify HUD ─────────────────────────────────────────────────────────
       - name: Notify HUD
         if: success()
         run: |
-          curl -s -X POST "http://${{ env.SERVER_IP }}:${{ env.SERVER_PORT }}/deploy-notify" \
+          curl -sf -X POST "http://${{ env.SERVER_IP }}:${{ env.SERVER_PORT }}/deploy-notify" \
             -H "Content-Type: application/json" \
             --max-time 10 \
             -d "{\"commit\":\"${{ github.sha }}\",\"message\":\"${{ github.event.head_commit.message }}\",\"actor\":\"${{ github.actor }}\"}" \
-            || echo "HUD notify skipped (non-critical)"
+            && echo "✅ HUD notified" || echo "HUD notify skipped (non-critical)"
           echo "Core system restored, Sir. All neural pathways nominal."
