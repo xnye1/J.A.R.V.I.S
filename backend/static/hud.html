@@ -62,6 +62,7 @@ body::before {
   background:var(--bg2);border:1px solid rgba(0,242,255,.2);
   border-radius:13px;padding:12px 14px;
   box-shadow:0 0 18px rgba(0,242,255,.04);position:relative;overflow:hidden;
+  z-index:1;
 }
 .panel::before {           /* corner bracket TL */
   content:'';position:absolute;top:6px;left:6px;
@@ -79,7 +80,8 @@ body::before {
 }
 
 /* ── LEFT COLUMN ── */
-#left { display:flex;flex-direction:column;gap:8px; }
+#left  { display:flex;flex-direction:column;gap:8px;position:relative;overflow:hidden; }
+#right { display:flex;flex-direction:column;gap:8px;position:relative;overflow:hidden; }
 
 /* Metric bars */
 .mrow  { display:flex;align-items:center;gap:7px;margin-bottom:7px; }
@@ -193,8 +195,7 @@ body::before {
 .td:nth-child(2){animation-delay:.18s}.td:nth-child(3){animation-delay:.36s}
 @keyframes td { 0%,80%,100%{transform:scale(.5);opacity:.3} 40%{transform:scale(1);opacity:1} }
 
-/* ── RIGHT COLUMN ── */
-#right { display:flex;flex-direction:column;gap:8px; }
+/* ── RIGHT COLUMN — position/overflow set with #left above ── */
 
 /* Remote chip */
 #remote-chip { display:flex;align-items:center;gap:10px; }
@@ -237,10 +238,83 @@ body::before {
   border:1px solid rgba(251,191,36,.35);border-radius:8px;
   padding:6px 12px;font-size:9px;color:var(--ylw);letter-spacing:1px; }
 #sim-warn.show { display:block; }
+
+/* ── Reactor switch ── */
+.reactor-wrap {
+  display:flex;align-items:center;gap:8px;margin-top:6px;padding-top:8px;
+  border-top:1px solid rgba(0,242,255,.12);
+}
+.reactor-label { font-size:8px;letter-spacing:2px;color:var(--dim);flex:1; }
+.reactor-val   { font-size:9px;letter-spacing:2px; }
+.reactor-val.on  { color:var(--c); }
+.reactor-val.off { color:var(--ylw); }
+.toggle-track {
+  width:40px;height:20px;border-radius:10px;cursor:pointer;position:relative;
+  background:rgba(0,242,255,.1);border:1px solid rgba(0,242,255,.3);
+  transition:background .25s;flex-shrink:0;
+}
+.toggle-track.active { background:rgba(0,242,255,.25);border-color:var(--c); }
+.toggle-thumb {
+  position:absolute;top:3px;left:3px;width:14px;height:14px;
+  border-radius:50%;background:var(--dim);transition:transform .25s,background .25s;
+}
+.toggle-track.active .toggle-thumb { transform:translateX(20px);background:var(--c); }
+
+/* ── Calendar widget ── */
+#cal-panel { flex:1;overflow-y:auto;scrollbar-width:none; }
+.cal-item {
+  display:flex;gap:8px;padding:5px 0;
+  border-bottom:1px solid rgba(0,242,255,.07);font-size:10px;line-height:1.4;
+}
+.cal-time { color:var(--c);flex-shrink:0;font-size:9px;width:44px; }
+.cal-title { color:var(--txt); }
+.cal-loc   { color:var(--dim);font-size:8px; }
+#cal-empty { color:var(--dim);font-size:9px;letter-spacing:1px; }
+
+/* ── Deploy notification banner ── */
+#deploy-banner {
+  display:none;position:fixed;top:50px;left:50%;transform:translateX(-50%);
+  z-index:999;padding:10px 28px;border-radius:10px;font-size:11px;
+  letter-spacing:2px;font-family:'Courier New',monospace;
+  animation:banner-in .35s ease-out;white-space:nowrap;
+  border:1px solid;
+}
+#deploy-banner.ok   { background:rgba(0,242,255,.12);border-color:rgba(0,242,255,.5);color:var(--c); }
+#deploy-banner.fail { background:rgba(239,68,68,.12); border-color:rgba(239,68,68,.5); color:var(--red); }
+@keyframes banner-in {
+  from { opacity:0; transform:translateX(-50%) translateY(-12px); }
+  to   { opacity:1; transform:translateX(-50%) translateY(0);     }
+}
+
+/* ── Data Cascade canvases ── */
+#cascade-l, #cascade-r {
+  position:absolute;inset:0;z-index:0;pointer-events:none;
+  transition:opacity .4s;
+}
+body.static-mode #cascade-l,
+body.static-mode #cascade-r { opacity:0; }
+
+/* ── Static (energy-saving) mode — kills all CSS animations ── */
+body.static-mode .ring,
+body.static-mode #orb,
+body.static-mode .ripple,
+body.static-mode #scan-line,
+body.static-mode #core,
+body.static-mode .led,
+body.static-mode .dot,
+body.static-mode .td {
+  animation: none !important;
+  transition: none !important;
+}
+body.static-mode #orb {
+  box-shadow: 0 0 18px rgba(0,242,255,.25) !important;
+  transform: none !important;
+}
 </style>
 </head>
 <body>
 <div id="flash"></div>
+<div id="deploy-banner"></div>
 <div id="app">
 
 <!-- TOP BAR -->
@@ -252,6 +326,7 @@ body::before {
 
 <!-- LEFT -->
 <div id="left">
+<canvas id="cascade-l"></canvas>
 
   <div class="panel">
     <div class="ptitle">SERVER TELEMETRY</div>
@@ -267,6 +342,9 @@ body::before {
     <div class="mrow"><div class="mlbl">LINK</div>
       <div class="track"><div class="fill" id="sig-fill" style="width:100%"></div></div>
       <div class="mval" id="sig-v">LIVE</div></div>
+    <div class="mrow"><div class="mlbl">DISK</div>
+      <div class="track"><div class="fill" id="disk-fill" style="width:0%"></div></div>
+      <div class="mval" id="disk-v">--GB</div></div>
   </div>
 
   <div class="panel">
@@ -305,6 +383,7 @@ body::before {
 
 <!-- RIGHT -->
 <div id="right">
+<canvas id="cascade-r"></canvas>
 
   <div class="panel">
     <div class="ptitle">REMOTE DEVICE</div>
@@ -321,8 +400,22 @@ body::before {
   </div>
 
   <div class="panel">
-    <div class="ptitle">SIGNAL TEST</div>
-    <button id="sig-btn" onclick="sendTestSignal()">⚡ TRANSMIT TEST SIGNAL</button>
+    <div class="ptitle">NEURAL CALENDAR</div>
+    <div id="cal-panel"><div id="cal-empty">NO SCHEDULE LOADED</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="ptitle">REACTOR CONTROL</div>
+    <div class="reactor-wrap">
+      <div class="reactor-label">REACTOR POWER</div>
+      <div class="reactor-val on" id="reactor-val-hud">ONLINE</div>
+      <div class="toggle-track active" id="reactor-toggle-hud" onclick="toggleReactor()">
+        <div class="toggle-thumb"></div>
+      </div>
+    </div>
+    <div style="margin-top:8px;">
+      <button id="sig-btn" onclick="sendTestSignal()">⚡ TRANSMIT TEST SIGNAL</button>
+    </div>
   </div>
 
 </div>
@@ -367,6 +460,17 @@ const flashEl = document.getElementById('flash');
 function flash() {
   flashEl.classList.add('on');
   setTimeout(() => flashEl.classList.remove('on'), 350);
+}
+
+/* ── Deploy banner ── */
+let _bannerTimer;
+function showDeployBanner(msg, failed) {
+  const b = document.getElementById('deploy-banner');
+  b.textContent  = (failed ? '⚠ ' : '▲ ') + msg.slice(0, 90);
+  b.className    = failed ? 'fail' : 'ok';
+  b.style.display = 'block';
+  clearTimeout(_bannerTimer);
+  _bannerTimer = setTimeout(() => { b.style.display = 'none'; }, 8000);
 }
 
 /* ── Feed ── */
@@ -414,9 +518,58 @@ function updateTelemetry(data) {
   set('cpu', data.cpu_percent,    85, 65);
   set('mem', data.memory_percent, 90, 70);
   if (data.battery_percent != null) set('bat', data.battery_percent, 20, 40);
-  if (data.remotes_online != null) {
-    document.getElementById('b-rem').textContent = data.remotes_online;
+  if (data.disk_percent    != null) {
+    const fill = document.getElementById('disk-fill');
+    const vEl  = document.getElementById('disk-v');
+    const pct  = Math.min(100, data.disk_percent);
+    if (fill) { fill.style.width = pct + '%'; fill.className = 'fill' + (pct>=90?' hi':pct>=75?' md':''); }
+    if (vEl && data.disk_free_gb != null)
+      vEl.textContent = data.disk_free_gb.toFixed(1) + 'GB';
   }
+  if (data.remotes_online != null)
+    document.getElementById('b-rem').textContent = data.remotes_online;
+  if (data.energy_saving != null) applyReactorState(data.energy_saving);
+}
+
+/* ── Reactor ── */
+let reactorOn = true;   // true = full power, false = energy saving
+function applyReactorState(energySaving) {
+  reactorOn = !energySaving;
+  document.body.classList.toggle('static-mode', energySaving);
+  const track = document.getElementById('reactor-toggle-hud');
+  const val   = document.getElementById('reactor-val-hud');
+  if (track) track.classList.toggle('active', !energySaving);
+  if (val) {
+    val.textContent = energySaving ? 'SAVING' : 'ONLINE';
+    val.className   = 'reactor-val ' + (energySaving ? 'off' : 'on');
+  }
+  // Cascade sync — pause saves GPU/CPU, resume restores streams
+  if (window._cascades) {
+    window._cascades.forEach(c => energySaving ? c.pause() : c.resume());
+  }
+}
+function toggleReactor() {
+  const newEnergySaving = reactorOn;   // flipping: if ON→saving, if saving→ON
+  if (ws?.readyState === 1)
+    ws.send(JSON.stringify({type:'reactor_toggle', energy_saving: newEnergySaving}));
+  applyReactorState(newEnergySaving);
+}
+
+/* ── Calendar ── */
+const calPanel = document.getElementById('cal-panel');
+function renderCalendar(date, events) {
+  if (!events || events.length === 0) {
+    calPanel.innerHTML = '<div id="cal-empty">NO SCHEDULE LOADED</div>'; return;
+  }
+  let h = date ? `<div style="font-size:8px;color:var(--dim);letter-spacing:2px;margin-bottom:6px">${escHtml(date)}</div>` : '';
+  events.forEach(e => {
+    h += `<div class="cal-item">
+      <div class="cal-time">${escHtml(e.time||'')}</div>
+      <div><div class="cal-title">${escHtml(e.title||'')}</div>
+           ${e.location?`<div class="cal-loc">${escHtml(e.location)}</div>`:''}
+      </div></div>`;
+  });
+  calPanel.innerHTML = h;
 }
 
 /* ── Latency ── */
@@ -553,11 +706,153 @@ function connect() {
         addEvt('GiGA Genie command received', 'hi');
         flash();
         break;
+
+      case 'reactor_state':
+        applyReactorState(m.energy_saving);
+        addEvt('Reactor: ' + (m.energy_saving ? 'ENERGY SAVE' : 'FULL POWER'),
+               m.energy_saving ? 'al' : 'hi');
+        break;
+
+      case 'system_update':
+        addMsg('GITHUB ACTIONS', m.message, 'hi');
+        addEvt('Deploy OK — ' + m.sha, 'hi');
+        showDeployBanner(m.message, false);
+        flash();
+        orbReact('SYSTEM UPDATE', 4000);
+        break;
+
+      case 'deploy_failed':
+        addMsg('DEPLOY ERROR', m.message, 'a');
+        addEvt('Deploy FAILED — ' + m.sha, 'al');
+        showDeployBanner(m.message, true);
+        flash();
+        orbReact('DEPLOY FAIL', 6000);
+        break;
+
+      case 'calendar_data':
+        renderCalendar(m.date, m.events);
+        addEvt(`Schedule synced: ${(m.events||[]).length} event(s)`, 'hi');
+        orbReact('CALENDAR SYNC', 1500);
+        break;
     }
   };
 }
 
 connect();
+
+/* ── Data Cascade ────────────────────────────────────────────────────────── */
+(function() {
+  const _r = n => Math.floor(Math.random() * n);
+
+  const POOLS = [
+    ()  => '0x' + Math.floor(Math.random()*0xFFFF).toString(16).toUpperCase().padStart(4,'0'),
+    ()  => '0x' + Math.floor(Math.random()*0xFFFF).toString(16).toUpperCase().padStart(4,'0'),
+    ()  => ['>>SYS','>>CPU','>>MEM','>>NET','>>SIG','>>OBJ','>>LOG','>>ACK','>>SYN','>>RDY'][_r(10)],
+    ()  => Array.from({length:8},()=>_r(2)).join(''),
+    ()  => (Math.random()*100).toFixed(2)+'%',
+    ()  => ['[OK]','[LIVE]','[ACK]','[RDY]','[ON]'][_r(5)],
+    ()  => `${_r(256)}.${_r(256)}.${_r(256)}.${_r(256)}`,
+    ()  => 'SRV:' + ['UP','CONN','POLL','PUSH','RECV'][_r(5)],
+  ];
+  function rndChar() { return POOLS[_r(POOLS.length)](); }
+
+  class DataCascade {
+    constructor(canvas, { colW=56, trail=18, minSpd=0.22, maxSpd=0.72, fSize=9.5 } = {}) {
+      this.cv    = canvas;
+      this.cx    = canvas.getContext('2d');
+      this.colW  = colW;
+      this.trail = trail;
+      this.min   = minSpd;
+      this.max   = maxSpd;
+      this.fSize = fSize;
+      this.lh    = fSize + 7;
+      this.cols  = [];
+      this.raf   = null;
+      this.paused= false;
+      this._fit();
+      const ro = new ResizeObserver(() => this._fit());
+      ro.observe(canvas.parentElement);
+    }
+
+    _fit() {
+      const p  = this.cv.parentElement.getBoundingClientRect();
+      this.cv.width  = p.width;
+      this.cv.height = p.height;
+      this._initCols();
+    }
+
+    _initCols() {
+      const n = Math.max(1, Math.floor(this.cv.width / this.colW));
+      this.cols = Array.from({length: n}, (_, i) => ({
+        x:     i * this.colW + this.colW * 0.5,
+        y:     -_r(this.cv.height),
+        spd:   this.min + Math.random() * (this.max - this.min),
+        chars: Array.from({length: this.trail}, rndChar),
+      }));
+    }
+
+    _draw() {
+      const { cx, cv, cols, lh, fSize, trail } = this;
+      cx.clearRect(0, 0, cv.width, cv.height);
+      cx.font      = `${fSize}px "Courier New", monospace`;
+      cx.textAlign = 'center';
+
+      for (const col of cols) {
+        for (let j = 0; j < col.chars.length; j++) {
+          const y = col.y + j * lh;
+          if (y < -lh || y > cv.height + lh) continue;
+
+          const frac = j / trail;
+          let alpha, r, g, b;
+          if (j === 0) {
+            r = 200; g = 255; b = 255; alpha = 0.95;   // near-white lead
+          } else {
+            r = 0;
+            g = Math.round(212 - frac * 132);           // 212→80
+            b = Math.round(255 - frac * 115);           // 255→140
+            alpha = Math.max(0, 0.78 - frac * 0.82);
+          }
+          cx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+          cx.fillText(col.chars[j], col.x, y);
+
+          if (Math.random() < 0.007) col.chars[j] = rndChar();
+        }
+        col.y += col.spd;
+        if (col.y - col.chars.length * lh > cv.height) {
+          col.y   = -_r(cv.height * 0.6);
+          col.spd = this.min + Math.random() * (this.max - this.min);
+        }
+      }
+    }
+
+    start() {
+      let last = 0;
+      const MS = 1000 / 30;   // 30 fps cap — smooth but CPU-friendly
+      const loop = ts => {
+        this.raf = requestAnimationFrame(loop);
+        if (this.paused || ts - last < MS) return;
+        last = ts;
+        this._draw();
+      };
+      this.raf = requestAnimationFrame(loop);
+    }
+
+    pause()  {
+      this.paused = true;
+      this.cx.clearRect(0, 0, this.cv.width, this.cv.height);
+    }
+    resume() { this.paused = false; }
+  }
+
+  // Init both side cascades
+  const cL = new DataCascade(document.getElementById('cascade-l'));
+  const cR = new DataCascade(document.getElementById('cascade-r'));
+  cL.start();
+  cR.start();
+
+  // Expose for reactor integration
+  window._cascades = [cL, cR];
+})();
 </script>
 </body>
 </html>

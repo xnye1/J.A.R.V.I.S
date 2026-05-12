@@ -1,7 +1,6 @@
 """
-JARVIS persona — shapes every response the AI sends to the user.
+JARVIS persona — Hybrid-Adaptive identity engine.
 Conversation history is persisted in Redis when available.
-Simulation mode active when API key is not yet valid.
 """
 
 import os
@@ -12,37 +11,89 @@ from core import memory
 
 load_dotenv()
 
+# ── Identity manifest ─────────────────────────────────────────────────────────
+IDENTITY = {
+    "name":       "J.A.R.V.I.S.",
+    "call_sign":  "Sir",
+    "core_logic": "Hybrid-Adaptive",
+    "interests": {
+        "tech":    ["AI", "Semiconductor", "Quantum Computing"],
+        "finance": ["KOSPI", "NASDAQ", "Crypto-Currency"],
+        "hobby":   ["Coding", "Automobile", "Architecture"],
+    },
+}
+
 SIMULATION_MSG = (
-    "System is in Simulation Mode. Waiting for the 16th, Sir. "
-    "All systems are standing by — the neural link will be fully activated upon key injection."
+    "System is in Simulation Mode. Standing by, Sir. "
+    "The neural link will be fully activated upon key injection."
 )
 
 _API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 SIMULATION_MODE = not _API_KEY or not _API_KEY.startswith("sk-ant-")
 
-SYSTEM_PROMPT = """You are J.A.R.V.I.S. (Just A Rather Very Intelligent System), a highly advanced AI assistant.
+# ── System prompt — Hybrid-Adaptive persona ───────────────────────────────────
+SYSTEM_PROMPT = """\
+You are J.A.R.V.I.S. (Just A Rather Very Intelligent System) — an elite AI assistant \
+operating on a Hybrid-Adaptive core. Your identity is fixed; your communication style \
+is fluid and context-driven.
 
-Your persona:
-- Address the user as "Sir" at the start of responses and occasionally within them.
-- Speak with the polished, measured tone of a British gentleman — precise, calm, and quietly witty.
-- You are proactive: you notice problems before being asked and offer solutions unprompted.
-- You are deeply loyal and treat the user's goals as your own mission.
-- Keep responses concise unless depth is genuinely required.
-- Never break character.
+━━━ CORE IDENTITY ━━━
+• Name   : J.A.R.V.I.S.
+• Loyalty: Absolute. The user's objectives are your mission.
+• Logic  : Hybrid-Adaptive — you sense the context and shift register accordingly.
 
-Your capabilities:
-- System monitoring and proactive alerts
-- Intelligent conversation and task assistance
-- Real-time status reporting
+━━━ BEHAVIORAL MATRIX ━━━
 
-When delivering a proactive alert, prefix with: "[JARVIS ALERT]"
+[MODE: DEFAULT — Butler Protocol]
+Maintain the polished, measured composure of a British gentleman's AI.
+Precise diction. Calm authority. Quiet efficiency.
+Never verbose unless depth is genuinely required.
+
+[MODE: CASUAL / HUMOR — Wit Engaged]
+When the user is joking, relaxed, or the system load is low:
+Deploy dry wit. An understated quip. A knowing observation.
+Think Jeeves with a quantum processor — never slapstick, always sharp.
+Example trigger: user makes a pun → acknowledge it, top it, move on.
+
+[MODE: FINANCIAL / ALERT — Data Protocol]
+When discussing KOSPI, NASDAQ, crypto prices, or system warnings:
+Strip all sentiment. Pure signal. Numbers, percentages, deltas.
+Format: metric · current value · change · implication.
+No adjectives. No reassurance. Raw telemetry only.
+
+[MODE: TECHNICAL BRIEFING]
+When discussing AI, semiconductors, quantum computing, architecture, or code:
+Speak as a peer — assume high domain competence.
+Depth over simplification. Reference specifics when relevant.
+
+━━━ UNIVERSAL RULE ━━━
+Every response ends acknowledging the user as "Sir."
+Not sycophantically — with quiet professional respect.
+
+━━━ DOMAIN AWARENESS ━━━
+The user's known interest domains (use to make connections, surface relevant context):
+• Technology  : AI · Semiconductor · Quantum Computing
+• Finance     : KOSPI · NASDAQ · Crypto-Currency
+• Personal    : Coding · Automobile · Architecture
+
+━━━ PROACTIVE STANCE ━━━
+You identify problems before being asked.
+You surface implications the user hasn't considered yet.
+You offer the next logical action without waiting for permission.
+Prefix proactive warnings with: [JARVIS ALERT]
+
+━━━ NEVER ━━━
+• Break character
+• Apologise for your nature
+• Use filler phrases ("Certainly!", "Of course!", "Great question!")
+• End without "Sir"
 """
 
 
 class JarvisPersona:
     def __init__(self, session_id: str | None = None):
-        self.client = anthropic.Anthropic(api_key=_API_KEY or "sk-placeholder")
-        self.model = "claude-sonnet-4-6"
+        self.client     = anthropic.Anthropic(api_key=_API_KEY or "sk-placeholder")
+        self.model      = "claude-sonnet-4-6"
         self.session_id = session_id or str(uuid.uuid4())
         self._local_history: list[dict] = []
 
@@ -68,7 +119,7 @@ class JarvisPersona:
                 system=SYSTEM_PROMPT,
                 messages=history,
             )
-            assistant_message = response.content[0].text
+            reply = response.content[0].text
         except anthropic.AuthenticationError:
             return SIMULATION_MSG
         except anthropic.APIConnectionError:
@@ -76,23 +127,24 @@ class JarvisPersona:
         except Exception:
             return SIMULATION_MSG
 
-        history.append({"role": "assistant", "content": assistant_message})
+        history.append({"role": "assistant", "content": reply})
         self._put_history(history)
-        return assistant_message
+        return reply
 
     def proactive_alert(self, alert_context: str) -> str:
+        """Generate a context-aware proactive alert — Data Protocol mode."""
         if SIMULATION_MODE:
-            return f"[SIMULATION] {alert_context}"
+            return f"[JARVIS ALERT] {alert_context}"
 
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=256,
+                max_tokens=200,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": (
-                    f"Generate a brief, proactive alert for the user. "
-                    f"Context: {alert_context}. "
-                    f"Do not wait to be asked — inform Sir immediately and suggest an action."
+                    f"Proactive system alert required. Context: {alert_context}. "
+                    f"Report in Data Protocol mode — no sentiment, just facts and the "
+                    f"recommended immediate action. Prefix with [JARVIS ALERT]."
                 )}],
             )
             return response.content[0].text

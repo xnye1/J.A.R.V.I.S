@@ -1,0 +1,102 @@
+name: JARVIS — Auto Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:       # allow manual trigger from GitHub UI
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true  # cancel queued deploy if a newer push lands
+
+jobs:
+  deploy:
+    name: Deploy to Oracle Server
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # ── 1. Checkout (for commit metadata only — actual deploy is remote) ────
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ── 2. SSH deploy ────────────────────────────────────────────────────────
+      - name: SSH → Pull & Rebuild
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key:      ${{ secrets.SSH_PRIVATE_KEY }}
+          port:     22
+          timeout:  10m
+          script: |
+            set -euo pipefail
+
+            echo "=== JARVIS Deploy: $(date -u) ==="
+            echo "Actor  : ${{ github.actor }}"
+            echo "Commit : ${{ github.sha }}"
+            echo "Msg    : ${{ github.event.head_commit.message }}"
+            echo "======================================="
+
+            cd /opt/jarvis
+
+            # Pull latest code
+            git fetch --all --prune
+            git reset --hard origin/main
+
+            # Rebuild and restart containers
+            sudo docker compose up -d --build --remove-orphans
+
+            # Remove dangling images to reclaim disk
+            sudo docker image prune -f
+
+            echo "=== Deploy OK: $(date -u) ==="
+
+      # ── 3. Notify JARVIS HUD via webhook ────────────────────────────────────
+      - name: Notify HUD
+        if: success()
+        env:
+          SERVER_IP:             ${{ secrets.SERVER_IP }}
+          DEPLOY_WEBHOOK_SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
+          COMMIT_SHA:            ${{ github.sha }}
+          COMMIT_MSG:            ${{ github.event.head_commit.message }}
+          ACTOR:                 ${{ github.actor }}
+        run: |
+          # Give the container ~5 s to finish restarting before sending the webhook
+          sleep 5
+
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "http://${SERVER_IP}:8000/deploy-notify" \
+            -H "X-Deploy-Token: ${DEPLOY_WEBHOOK_SECRET}" \
+            -H "Content-Type: application/json" \
+            --max-time 10 \
+            -d "{
+              \"commit\":  \"${COMMIT_SHA}\",
+              \"message\": \"${COMMIT_MSG}\",
+              \"actor\":   \"${ACTOR}\"
+            }")
+
+          echo "HUD webhook HTTP status: ${HTTP_STATUS}"
+          # Don't fail the workflow if HUD is temporarily unreachable
+          [ "${HTTP_STATUS}" = "200" ] && echo "HUD notified OK." || echo "HUD notification skipped (server may be restarting)."
+
+      # ── 4. Failure notification ──────────────────────────────────────────────
+      - name: Notify HUD on failure
+        if: failure()
+        env:
+          SERVER_IP:             ${{ secrets.SERVER_IP }}
+          DEPLOY_WEBHOOK_SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
+          ACTOR:                 ${{ github.actor }}
+        run: |
+          curl -s -X POST "http://${SERVER_IP}:8000/deploy-notify" \
+            -H "X-Deploy-Token: ${DEPLOY_WEBHOOK_SECRET}" \
+            -H "Content-Type: application/json" \
+            --max-time 10 \
+            -d "{
+              \"commit\":  \"${{ github.sha }}\",
+              \"message\": \"DEPLOY FAILED — manual intervention required\",
+              \"actor\":   \"${ACTOR}\",
+              \"failed\":  true
+            }" || true

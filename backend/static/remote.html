@@ -93,6 +93,53 @@
   .signal-btn { border-color: rgba(167,139,250,0.5); color: var(--purple); letter-spacing: 2px; font-weight: 700; }
   .signal-btn:active { background: rgba(167,139,250,0.15); border-color: var(--purple); }
 
+  /* ── Reactor strip ── */
+  #reactor-strip {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 10px 14px;
+  }
+  #reactor-strip .rl { font-size: 9px; letter-spacing: 2px; color: var(--muted); flex: 1; }
+  #reactor-strip .rv { font-size: 10px; letter-spacing: 2px; font-weight: 700; }
+  #reactor-strip .rv.on  { color: var(--cyan); }
+  #reactor-strip .rv.off { color: #fbbf24; }
+  .rtrack {
+    width: 38px; height: 20px; border-radius: 10px; cursor: pointer; position: relative;
+    background: rgba(0,242,255,.08); border: 1px solid rgba(0,242,255,.3); flex-shrink: 0;
+    transition: background .2s;
+  }
+  .rtrack.on { background: rgba(0,242,255,.22); border-color: var(--cyan); }
+  .rthumb {
+    position: absolute; top: 3px; left: 3px; width: 14px; height: 14px;
+    border-radius: 50%; background: var(--muted); transition: transform .2s, background .2s;
+  }
+  .rtrack.on .rthumb { transform: translateX(18px); background: var(--cyan); }
+
+  /* ── Calendar section ── */
+  #cal-section {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 10px 14px; display: flex; flex-direction: column; gap: 6px;
+  }
+  #cal-section .ptitle { font-size: 8px; letter-spacing: 3px; color: var(--cyan);
+    border-bottom: 1px solid rgba(0,242,255,.15); padding-bottom: 6px; margin-bottom: 4px; }
+  .cal-row {
+    display: flex; align-items: center; gap: 6px; padding: 5px 0;
+    border-bottom: 1px solid rgba(0,242,255,.07); font-size: 10px;
+  }
+  .cal-row input[type=time], .cal-row input[type=text] {
+    background: transparent; border: none; color: var(--text); font-family: inherit;
+    font-size: 10px; outline: none; flex: 1; min-width: 0;
+  }
+  .cal-row .ct { color: var(--cyan); font-size: 9px; flex-shrink: 0; }
+  #cal-send-btn {
+    width: 100%; padding: 9px; border-radius: 10px; cursor: pointer;
+    background: rgba(0,242,255,.06); border: 1px solid rgba(0,242,255,.3);
+    color: var(--cyan); font-family: 'Courier New', monospace;
+    font-size: 10px; letter-spacing: 2px; transition: background .15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #cal-send-btn:active { background: rgba(0,242,255,.18); }
+
   /* ── Input row ── */
   #input-row { display: flex; gap: 8px; align-items: center; }
   #msg-input {
@@ -150,6 +197,15 @@
     <div id="voice-hint">HOLD TO SPEAK</div>
   </div>
 
+  <!-- Reactor power strip -->
+  <div id="reactor-strip">
+    <div class="rl">REACTOR POWER</div>
+    <div class="rv on" id="rval">ONLINE</div>
+    <div class="rtrack on" id="rtrack" onclick="toggleReactor()">
+      <div class="rthumb"></div>
+    </div>
+  </div>
+
   <!-- Quick actions -->
   <div id="quick">
     <div class="qbtn" onclick="quickSend('상태 보고')">📊 상태 보고</div>
@@ -157,6 +213,13 @@
     <div class="qbtn" onclick="quickSend('날씨 알려줘')">🌤 날씨</div>
     <div class="qbtn" onclick="resetConv()">🔄 대화 초기화</div>
     <div class="qbtn signal-btn" onclick="sendTestSignal()" style="grid-column:span 2;">⚡ TEST SIGNAL → HUD</div>
+  </div>
+
+  <!-- Neural Calendar -->
+  <div id="cal-section">
+    <div class="ptitle">NEURAL CALENDAR — TODAY</div>
+    <div id="cal-events"></div>
+    <button id="cal-send-btn" onclick="pushCalendar()">📅 SYNC SCHEDULE → HUD</button>
   </div>
 
   <!-- Text input -->
@@ -171,6 +234,57 @@
 <script>
 const WS_URL = `ws://${location.host}/ws`;
 let ws;
+let reactorOn = true;  // true = full power
+
+// ── Virtual calendar events (editable) ───────────────────────────────────────
+const DEFAULT_EVENTS = [
+  { time: '09:00', title: 'Morning briefing', location: 'Home' },
+  { time: '11:00', title: 'Deep work — JARVIS dev', location: '' },
+  { time: '13:00', title: 'Lunch break', location: '' },
+  { time: '15:00', title: 'Sprint review', location: 'Remote' },
+  { time: '18:00', title: 'Evening system check', location: '' },
+];
+
+function buildCalendarUI() {
+  const today = new Date().toLocaleDateString('ko-KR',{year:'numeric',month:'2-digit',day:'2-digit'});
+  const container = document.getElementById('cal-events');
+  container.innerHTML = '';
+  DEFAULT_EVENTS.forEach((e, i) => {
+    const row = document.createElement('div');
+    row.className = 'cal-row';
+    row.innerHTML =
+      `<span class="ct">${e.time}</span>` +
+      `<input type="text" value="${e.title}" data-idx="${i}" data-field="title" />` +
+      `<input type="text" value="${e.location}" data-idx="${i}" data-field="location"` +
+      ` style="color:var(--muted);font-size:9px;max-width:70px" placeholder="loc" />`;
+    container.appendChild(row);
+  });
+}
+buildCalendarUI();
+
+function getCalendarEvents() {
+  const rows = document.querySelectorAll('.cal-row');
+  const events = [];
+  rows.forEach((row, i) => {
+    const inputs = row.querySelectorAll('input');
+    if (inputs.length >= 2) {
+      events.push({
+        time:     DEFAULT_EVENTS[i]?.time || '',
+        title:    inputs[0].value.trim(),
+        location: inputs[1].value.trim(),
+      });
+    }
+  });
+  return events;
+}
+
+function pushCalendar() {
+  if (ws?.readyState !== 1) return;
+  const today = new Date().toLocaleDateString('ko-KR',{year:'numeric',month:'2-digit',day:'2-digit'});
+  const events = getCalendarEvents();
+  ws.send(JSON.stringify({ type: 'calendar_data', date: today, events }));
+  addMsg('SYSTEM', `Schedule pushed to HUD — ${events.length} event(s).`, 'sim');
+}
 
 // ── Battery reporting ──────────────────────────────────────────────────────
 function getBattery() {
@@ -229,6 +343,8 @@ function connect() {
       addMsg('JARVIS', msg.message, 'j');
     } else if (msg.type === 'proactive_alert') {
       addMsg('ALERT', msg.message, 'sim');
+    } else if (msg.type === 'reactor_state') {
+      applyReactorUI(msg.energy_saving);
     }
   };
 }
@@ -264,6 +380,26 @@ async function resetConv() {
 document.getElementById('msg-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') sendText();
 });
+
+// ── Reactor toggle ────────────────────────────────────────────────────────────
+function applyReactorUI(energySaving) {
+  reactorOn = !energySaving;
+  const track = document.getElementById('rtrack');
+  const val   = document.getElementById('rval');
+  if (track) track.className = 'rtrack' + (energySaving ? '' : ' on');
+  if (val) {
+    val.textContent  = energySaving ? 'SAVING' : 'ONLINE';
+    val.className    = 'rv ' + (energySaving ? 'off' : 'on');
+  }
+}
+
+function toggleReactor() {
+  const newEnergySaving = reactorOn;
+  if (ws?.readyState === 1)
+    ws.send(JSON.stringify({ type: 'reactor_toggle', energy_saving: newEnergySaving }));
+  applyReactorUI(newEnergySaving);
+  addMsg('SYSTEM', newEnergySaving ? 'Energy saving mode ON.' : 'Reactor full power.', 'sim');
+}
 
 // ── Voice input (Web Speech API) ──────────────────────────────────────────
 const voiceBtn = document.getElementById('voice-btn');

@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -22,10 +22,14 @@ _KEY = os.getenv("ANTHROPIC_API_KEY", "")
 _SIMULATION = not _KEY or not _KEY.startswith("sk-ant-") or "여기에" in _KEY
 print(f"[JARVIS] {'Simulation Mode' if _SIMULATION else 'Full operational'} active.")
 
-from core.persona import JarvisPersona
+from core.persona import JarvisPersona, IDENTITY, SIMULATION_MODE as _SIM_PERSONA
+from core.system_info import get_detailed_status, to_dict as status_to_dict
 from system.monitor import ProactiveEngine, get_current_status
 
 STATIC = Path(__file__).parent / "static"
+
+# ── Reactor / Energy state ────────────────────────────────────────────────────
+energy_saving_mode: bool = False   # True = slow poll + static HUD animations
 
 
 # ── Connection Manager ────────────────────────────────────────────────────────
@@ -81,22 +85,37 @@ async def handle_alert(alert_text: str, _status):
 proactive_engine = ProactiveEngine(on_alert=handle_alert)
 
 
-# ── Periodic status push to HUD (every 15 s) ─────────────────────────────────
+# ── Periodic status push to HUD ──────────────────────────────────────────────
+# Always ticks every 5 s so mode-changes take effect quickly;
+# the broadcast itself respects the current energy-saving interval.
 async def _status_broadcaster():
+    import time
+    last_at = 0.0
     while True:
-        await asyncio.sleep(15)
+        await asyncio.sleep(5)
+        interval = 600 if energy_saving_mode else 5
+        now = time.monotonic()
+        if now - last_at < interval:
+            continue
+        last_at = now
         if manager.hud_count == 0:
             continue
-        s = get_current_status()
+        s  = get_detailed_status()
+        pa = get_current_status()
         await manager.broadcast_hud({
             "type": "status",
             "data": {
-                "battery_percent": s.battery_percent,
+                "battery_percent":  s.battery_percent,
                 "battery_plugged":  s.battery_plugged,
                 "cpu_percent":      s.cpu_percent,
                 "memory_percent":   s.memory_percent,
-                "alerts":           s.alerts,
+                "disk_free_gb":     s.disk_free_gb,
+                "disk_used_gb":     s.disk_used_gb,
+                "disk_total_gb":    s.disk_total_gb,
+                "disk_percent":     s.disk_percent,
+                "alerts":           pa.alerts,
                 "remotes_online":   manager.remote_count,
+                "energy_saving":    energy_saving_mode,
             },
         })
 
@@ -126,10 +145,28 @@ class ChatResponse(BaseModel):
     simulation_mode: bool = _SIMULATION
 
 class GigaGenieRequest(BaseModel):
-    utterance: str          # spoken text from GiGA Genie device
+    utterance: str
     userId: str = "unknown"
     deviceId: str = "unknown"
     extra: dict = {}
+
+class ReactorRequest(BaseModel):
+    energy_saving: bool
+
+class CalendarEvent(BaseModel):
+    time: str
+    title: str
+    location: str = ""
+
+class CalendarPayload(BaseModel):
+    events: list[CalendarEvent]
+    date: str = ""
+
+class DeployNotifyRequest(BaseModel):
+    commit:  str = ""
+    message: str = ""
+    actor:   str = "github-actions"
+    failed:  bool = False
 
 
 # ── REST endpoints ────────────────────────────────────────────────────────────
@@ -137,6 +174,11 @@ class GigaGenieRequest(BaseModel):
 async def root():
     return {"status": "online", "system": "JARVIS", "version": "1.0.0",
             "simulation_mode": _SIMULATION, "hud": "/hud", "remote": "/remote"}
+
+@app.get("/persona")
+async def persona_manifest():
+    """Returns the live JARVIS identity config."""
+    return {**IDENTITY, "simulation_mode": _SIMULATION, "core_logic": IDENTITY["core_logic"]}
 
 @app.get("/health")
 async def health():
@@ -159,6 +201,78 @@ async def system_status():
 async def reset_conversation():
     jarvis.reset_conversation()
     return {"status": "conversation reset"}
+
+@app.post("/reactor")
+async def reactor_toggle(req: ReactorRequest):
+    global energy_saving_mode
+    energy_saving_mode = req.energy_saving
+    await manager.broadcast_all({
+        "type": "reactor_state",
+        "energy_saving": energy_saving_mode,
+    })
+    mode = "ENERGY SAVING" if energy_saving_mode else "FULL POWER"
+    return {"status": "ok", "mode": mode, "energy_saving": energy_saving_mode}
+
+@app.get("/reactor")
+async def reactor_status():
+    return {"energy_saving": energy_saving_mode}
+
+@app.post("/calendar")
+async def calendar_push(payload: CalendarPayload):
+    events = [{"time": e.time, "title": e.title, "location": e.location}
+              for e in payload.events]
+    await manager.broadcast_hud({
+        "type": "calendar_data",
+        "date": payload.date,
+        "events": events,
+    })
+    return {"status": "ok", "event_count": len(events)}
+
+@app.get("/telemetry")
+async def telemetry_snapshot():
+    s = get_detailed_status()
+    return status_to_dict(s)
+
+@app.post("/deploy-notify")
+async def deploy_notify(
+    req: DeployNotifyRequest,
+    x_deploy_token: str = Header(default=""),
+):
+    """Called by GitHub Actions after a successful (or failed) deploy."""
+    expected = os.getenv("DEPLOY_WEBHOOK_SECRET", "")
+    if expected and x_deploy_token != expected:
+        raise HTTPException(status_code=403, detail="Invalid deploy token.")
+
+    short_sha = req.commit[:7] if req.commit else "???????"
+    commit_msg = req.message[:72] if req.message else ""
+
+    if req.failed:
+        hud_msg = (
+            f"⚠ DEPLOY FAILED — SHA:{short_sha} — {commit_msg} "
+            f"(actor: {req.actor})"
+        )
+        event_type = "deploy_failed"
+    else:
+        hud_msg = (
+            f"SYSTEM UPDATED: New version deployed via GitHub Actions "
+            f"[{short_sha}] — {commit_msg}"
+        )
+        event_type = "system_update"
+
+    await manager.broadcast_hud({
+        "type":    event_type,
+        "message": hud_msg,
+        "sha":     short_sha,
+        "actor":   req.actor,
+        "failed":  req.failed,
+    })
+    await manager.broadcast_hud({
+        "type": "orb_react",
+        "intensity": 1.0,
+        "duration":  4000 if not req.failed else 6000,
+    })
+
+    return {"status": "notified", "sha": short_sha, "failed": req.failed}
 
 @app.post("/gigagenie")
 async def gigagenie_webhook(req: GigaGenieRequest):
@@ -261,8 +375,23 @@ async def websocket_endpoint(ws: WebSocket):
                 })
 
             elif msg_type == "remote_status":
-                # Phone's own battery/sensor data → forward to HUD
                 await manager.broadcast_hud({"type": "remote_status", **data})
+
+            elif msg_type == "reactor_toggle":
+                global energy_saving_mode
+                energy_saving_mode = bool(data.get("energy_saving", False))
+                await manager.broadcast_all({
+                    "type": "reactor_state",
+                    "energy_saving": energy_saving_mode,
+                })
+
+            elif msg_type == "calendar_data":
+                # Virtual calendar relay: remote → HUD
+                await manager.broadcast_hud({
+                    "type": "calendar_data",
+                    "date":   data.get("date", ""),
+                    "events": data.get("events", []),
+                })
 
             elif msg_type == "ping":
                 await ws.send_json({"type": "pong"})
