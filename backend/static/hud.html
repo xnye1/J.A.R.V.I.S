@@ -40,7 +40,7 @@ body::before {
 /* ── Grid layout ────────────────────────────────────────────────────── */
 #app {
   display:grid;height:100vh;padding:10px;gap:8px;
-  grid-template-rows: 40px 1fr 80px;
+  grid-template-rows: 40px 1fr 54px 50px;
   grid-template-columns: 270px 1fr 270px;
 }
 
@@ -294,6 +294,26 @@ body::before {
 body.static-mode #cascade-l,
 body.static-mode #cascade-r { opacity:0; }
 
+/* ── Service status bar ── */
+#svc-bar {
+  grid-column:1/-1;display:flex;align-items:stretch;gap:6px;
+  border-top:1px solid rgba(0,242,255,.12);padding-top:6px;margin-top:-2px;
+}
+.svc-chip {
+  flex:1;background:var(--bg2);border:1px solid rgba(0,242,255,.12);
+  border-radius:8px;padding:5px 10px;min-width:0;
+}
+.svc-name {
+  font-size:7px;letter-spacing:2px;color:var(--dim);margin-bottom:3px;
+}
+.svc-val {
+  font-size:9px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.svc-val .hi  { color:var(--c); }
+.svc-val .md  { color:var(--ylw); }
+.svc-val .al  { color:var(--red); }
+.svc-val .grn { color:var(--grn); }
+
 /* ── Static (energy-saving) mode — kills all CSS animations ── */
 body.static-mode .ring,
 body.static-mode #orb,
@@ -418,6 +438,30 @@ body.static-mode #orb {
     </div>
   </div>
 
+</div>
+
+<!-- SERVICE STATUS BAR -->
+<div id="svc-bar">
+  <div class="svc-chip">
+    <div class="svc-name">STUDY</div>
+    <div class="svc-val" id="svc-study">-- / D--</div>
+  </div>
+  <div class="svc-chip">
+    <div class="svc-name">PRODUCTIVITY</div>
+    <div class="svc-val" id="svc-prod">-- / FS --</div>
+  </div>
+  <div class="svc-chip">
+    <div class="svc-name">INTELLIGENCE</div>
+    <div class="svc-val" id="svc-intel">-- articles</div>
+  </div>
+  <div class="svc-chip">
+    <div class="svc-name">SYS ASSIST</div>
+    <div class="svc-val" id="svc-sys">-- automations</div>
+  </div>
+  <div class="svc-chip">
+    <div class="svc-name">ANALYSIS</div>
+    <div class="svc-val" id="svc-mood">-- / --</div>
+  </div>
 </div>
 
 <!-- BOTTOM -->
@@ -752,6 +796,42 @@ reg('dopamine_alert', m => {
   addAlert(m.message);
   orbReact('DISTRACTION!', 2500);
   flash();
+});
+
+/* ── Service mock report handlers ── */
+reg('study_update', m => {
+  const d = m.data || {};
+  const el = document.getElementById('svc-study');
+  if (el) el.innerHTML =
+    `<span class="hi">${escHtml(d.subject||'--').slice(0,12)}</span> ${escHtml(d.dday||'D-?')} <span class="${d.status==='Excellent'?'grn':d.status==='Behind Schedule'?'al':'md'}">${escHtml(d.status||'')}</span>`;
+});
+
+reg('productivity_update', m => {
+  const d = m.data || {};
+  const el = document.getElementById('svc-prod');
+  if (el) el.innerHTML =
+    `<span class="hi">${d.tasks_done||0}/${d.tasks_total||0}</span> FS <span class="${d.focus_grade==='A'?'grn':d.focus_grade==='D'?'al':'md'}">${d.focus_score||'--'}(${escHtml(d.focus_grade||'-')})</span>`;
+});
+
+reg('intelligence_update', m => {
+  const d = m.data || {};
+  const el = document.getElementById('svc-intel');
+  if (el) el.innerHTML =
+    `<span class="hi">${d.articles_new||0}</span> new · <span class="${d.sentiment==='Bullish'?'grn':d.sentiment==='Bearish'?'al':'md'}">${escHtml(d.sentiment||'--')}</span>`;
+});
+
+reg('sysassist_update', m => {
+  const d = m.data || {};
+  const el = document.getElementById('svc-sys');
+  if (el) el.innerHTML =
+    `<span class="hi">${d.automations||0}</span> auto · <span class="${d.vulnerabilities>0?'al':'grn'}">${d.vulnerabilities||0} vuln</span>`;
+});
+
+reg('analysis_update', m => {
+  const d = m.data || {};
+  const el = document.getElementById('svc-mood');
+  if (el) el.innerHTML =
+    `<span class="hi">${escHtml(d.mood||'--')}</span> · <span class="${d.stress==='High'||d.stress==='Elevated'?'al':'grn'}">${escHtml(d.stress||'--')}</span> · CL <span class="${d.cog_level==='High'?'al':d.cog_level==='Medium'?'md':'grn'}">${d.cog_load_pct||'--'}%</span>`;
 });
 
 connect();

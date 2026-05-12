@@ -119,6 +119,23 @@ async def _status_broadcaster() -> None:
         }, Priority.NORMAL)
 
 
+# ── Mock service report broadcaster ──────────────────────────────────────────
+
+async def _mock_service_broadcaster() -> None:
+    """Every 10 s, collect mock_report() from each service and push to HUD."""
+    while True:
+        await asyncio.sleep(10)
+        if manager.hud_count == 0 or state.energy_saving:
+            continue
+        for svc in registry._svcs.values():
+            try:
+                report = svc.mock_report()
+                if report:
+                    await dispatcher.emit(report, Priority.LOW)
+            except Exception:
+                pass
+
+
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -129,6 +146,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     t1 = asyncio.create_task(proactive_engine.start())
     t2 = asyncio.create_task(_status_broadcaster())
     t3 = asyncio.create_task(dispatcher.run())
+    t4 = asyncio.create_task(_mock_service_broadcaster())
     await registry.start_all()
 
     print("[JARVIS] All systems nominal, Sir.")
@@ -137,7 +155,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     await registry.stop_all()
     proactive_engine.stop()
     dispatcher.stop()
-    for t in (t1, t2, t3):
+    for t in (t1, t2, t3, t4):
         t.cancel()
 
 

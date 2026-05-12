@@ -84,3 +84,11 @@ class BaseService(ABC):
         self._active = False
         self._state.unregister_service(self.name)
         self._log("offline.")
+
+    def mock_report(self) -> dict | None:
+        """
+        Return a mock HUD payload for the periodic live report.
+        Override in every service subclass that wants to push mock data.
+        Returns None to opt out of the report cycle.
+        """
+        return None

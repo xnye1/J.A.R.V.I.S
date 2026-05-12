@@ -39,6 +39,11 @@ backend/
     base_service.py       Abstract base class for all services (lifecycle + emit helpers)
     memory_service.py     Vector-DB-ready semantic memory (local dict → ChromaDB → Pinecone)
     dopamine_guard.py     Focus session monitor — psutil process scan + Pomodoro timer
+    study_service.py      Study coach — D-Day countdown, Pomodoro tracker, quiz, heatmap (mock → Phase 16)
+    productivity_service.py  Task board, goal streaks, schedule gaps, focus score (mock → Phase 16)
+    intelligence_service.py  Personal search, auto-summariser, advice, news digest (mock → Phase 16)
+    system_service.py     Code review advisor, automations, dep scanner, shell advice (mock → Phase 16)
+    analysis_service.py   Mood/stress detector, behaviour patterns, cognitive load (mock → Phase 16)
   system/
     monitor.py            ProactiveEngine — threshold alerts (battery/CPU/MEM)
   static/
@@ -56,7 +61,7 @@ backend/
 
 ### HUD Widget Registry (hud.html)
 New event types are added as `reg('type', handler)` — zero changes to WS connect() logic.
-Current handlers: connected · pong · remote_speaking · chat_response · proactive_alert · orb_react · status · remote_status · remote_connected · remote_disconnected · test_signal · gigagenie_command · reactor_state · system_update · deploy_failed · calendar_data · service_online · dopamine_session_start · dopamine_session_end · dopamine_alert
+Current handlers: connected · pong · remote_speaking · chat_response · proactive_alert · orb_react · status · remote_status · remote_connected · remote_disconnected · test_signal · gigagenie_command · reactor_state · system_update · deploy_failed · calendar_data · service_online · dopamine_session_start · dopamine_session_end · dopamine_alert · **study_update · productivity_update · intelligence_update · sysassist_update · analysis_update** (→ service status bar chips)
 
 ### WebSocket Protocol
 
@@ -72,6 +77,11 @@ Current handlers: connected · pong · remote_speaking · chat_response · proac
 | `test_signal` | either→server | Signal test |
 | `ping` / `pong` | either | Latency measurement |
 | `status` | server→hud | Periodic telemetry (CPU/MEM/DISK/etc.) |
+| `study_update` | server→hud | Study service mock report (10 s) |
+| `productivity_update` | server→hud | Productivity service mock report (10 s) |
+| `intelligence_update` | server→hud | Intelligence service mock report (10 s) |
+| `sysassist_update` | server→hud | System service mock report (10 s) |
+| `analysis_update` | server→hud | Analysis service mock report (10 s) |
 
 ### REST Endpoints
 
@@ -120,6 +130,7 @@ Toggle via: HUD switch · Remote switch · `POST /reactor` · WS `reactor_toggle
 | 14 | CI/CD pipeline — GitHub Actions auto-deploy + HUD webhook notification | `.github/workflows/deploy.yml`, `POST /deploy-notify` in `main.py` |
 | Persona | Hybrid-Adaptive identity engine — 4-mode behavioral matrix, domain awareness | `core/persona.py` — `IDENTITY` dict, `SYSTEM_PROMPT`, `GET /persona` |
 | 15 | Modular architecture — state singleton, priority dispatcher, service layer, Widget Registry HUD | `core/state.py`, `core/dispatcher.py`, `services/`, `api/`, `main.py` refactor |
+| 15 (skeleton) | 5 mock service files, 10-s broadcaster, HUD service status bar (5 chips) | `services/study|productivity|intelligence|system|analysis_service.py`, `main.py _mock_service_broadcaster`, `hud.html #svc-bar` |
 
 ### Phase 11.2 Deliverables (latest)
 

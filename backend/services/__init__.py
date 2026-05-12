@@ -10,9 +10,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from services.base_service   import BaseService
-from services.memory_service import MemoryService
-from services.dopamine_guard import DopamineGuard
+from services.base_service      import BaseService
+from services.memory_service    import MemoryService
+from services.dopamine_guard    import DopamineGuard
+from services.study_service     import StudyService
+from services.productivity_service import ProductivityService
+from services.intelligence_service import IntelligenceService
+from services.system_service    import SystemService
+from services.analysis_service  import AnalysisService
 
 if TYPE_CHECKING:
     from core.dispatcher import HUDDispatcher
@@ -42,6 +47,11 @@ class ServiceRegistry:
         classes: list[type[BaseService]] = [
             MemoryService,
             DopamineGuard,
+            StudyService,
+            ProductivityService,
+            IntelligenceService,
+            SystemService,
+            AnalysisService,
         ]
         for cls in classes:
             svc = cls(self._dp, self._st)
