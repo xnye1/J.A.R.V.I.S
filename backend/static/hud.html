@@ -631,112 +631,128 @@ function connect() {
 
   ws.onmessage = ({data}) => {
     const m = JSON.parse(data);
-    switch (m.type) {
-
-      case 'connected':
-        if (m.simulation_mode) document.getElementById('sim-warn').classList.add('show');
-        if (m.status) updateTelemetry({...m.status, remotes_online: m.remotes_online});
-        addMsg('JARVIS', 'Bridge display online. Neural link established, Sir.', 'j');
-        addEvt('Bridge display registered');
-        // initial latency ping
-        pingAt = Date.now(); ws.send(JSON.stringify({type:'ping'}));
-        break;
-
-      case 'pong':
-        updateLatency(Date.now() - pingAt);
-        break;
-
-      case 'remote_speaking':
-        typing.classList.add('show');
-        addMsg('REMOTE ▶', m.message, 'r');
-        orbReact('LISTENING', 600);
-        addEvt('Remote command: ' + m.message.slice(0,40));
-        break;
-
-      case 'chat_response':
-        typing.classList.remove('show');
-        addMsg('JARVIS', m.message, 'j');
-        orbReact('RESPONDING', 3500);
-        break;
-
-      case 'proactive_alert':
-        addMsg('JARVIS ALERT', m.message, 'a');
-        addAlert(m.message);
-        orbReact('ALERT', 3000);
-        flash();
-        break;
-
-      case 'orb_react':
-        orbReact(undefined, m.duration);
-        break;
-
-      case 'status':
-        updateTelemetry(m.data);
-        break;
-
-      case 'remote_status':
-        setRemote(1, m.battery);
-        addEvt(`Phone battery: ${m.battery}%`);
-        break;
-
-      case 'remote_connected':
-        setRemote(m.count);
-        addMsg('SYSTEM', `Remote device linked. ${m.count} connection(s) active.`, 's');
-        addEvt(`Remote connected (${m.count} total)`, 'hi');
-        orbReact('LINK ESTABLISHED', 1500);
-        break;
-
-      case 'remote_disconnected':
-        setRemote(m.count);
-        addEvt('Remote disconnected', 'al');
-        if (m.count === 0) addMsg('SYSTEM', 'Remote link dropped.', 's');
-        break;
-
-      case 'test_signal':
-        flash(); flash();
-        addMsg('SIGNAL', '⚡ Signal Received from Sir\'s Mobile — All systems nominal.', 'sig');
-        orbReact('SIGNAL LOCK', 2500);
-        addEvt('TEST SIGNAL received', 'hi');
-        break;
-
-      case 'gigagenie_command':
-        addMsg('GIGA GENIE ▶', m.query, 'r');
-        addMsg('JARVIS', m.message, 'j');
-        orbReact('GIGA GENIE', 3000);
-        addEvt('GiGA Genie command received', 'hi');
-        flash();
-        break;
-
-      case 'reactor_state':
-        applyReactorState(m.energy_saving);
-        addEvt('Reactor: ' + (m.energy_saving ? 'ENERGY SAVE' : 'FULL POWER'),
-               m.energy_saving ? 'al' : 'hi');
-        break;
-
-      case 'system_update':
-        addMsg('GITHUB ACTIONS', m.message, 'hi');
-        addEvt('Deploy OK — ' + m.sha, 'hi');
-        showDeployBanner(m.message, false);
-        flash();
-        orbReact('SYSTEM UPDATE', 4000);
-        break;
-
-      case 'deploy_failed':
-        addMsg('DEPLOY ERROR', m.message, 'a');
-        addEvt('Deploy FAILED — ' + m.sha, 'al');
-        showDeployBanner(m.message, true);
-        flash();
-        orbReact('DEPLOY FAIL', 6000);
-        break;
-
-      case 'calendar_data':
-        renderCalendar(m.date, m.events);
-        addEvt(`Schedule synced: ${(m.events||[]).length} event(s)`, 'hi');
-        orbReact('CALENDAR SYNC', 1500);
-        break;
-    }
+    const handler = WR[m.type];
+    if (handler) handler(m);
+    else console.warn('[HUD] Unregistered event type:', m.type);
   };
 }
+
+/* ── Widget Registry — add new event types here, never touch connect() ── */
+const WR = {};
+const reg = (type, fn) => { WR[type] = fn; };
+
+reg('connected', m => {
+  if (m.simulation_mode) document.getElementById('sim-warn').classList.add('show');
+  if (m.status) updateTelemetry({...m.status, remotes_online: m.remotes_online});
+  addMsg('JARVIS', 'Bridge display online. Neural link established, Sir.', 'j');
+  addEvt('Bridge display registered');
+  pingAt = Date.now(); ws.send(JSON.stringify({type:'ping'}));
+});
+
+reg('pong', () => updateLatency(Date.now() - pingAt));
+
+reg('remote_speaking', m => {
+  typing.classList.add('show');
+  addMsg('REMOTE ▶', m.message, 'r');
+  orbReact('LISTENING', 600);
+  addEvt('Remote command: ' + m.message.slice(0,40));
+});
+
+reg('chat_response', m => {
+  typing.classList.remove('show');
+  addMsg('JARVIS', m.message, 'j');
+  orbReact('RESPONDING', 3500);
+});
+
+reg('proactive_alert', m => {
+  addMsg('JARVIS ALERT', m.message, 'a');
+  addAlert(m.message);
+  orbReact('ALERT', 3000);
+  flash();
+});
+
+reg('orb_react',         m => orbReact(undefined, m.duration));
+reg('status',            m => updateTelemetry(m.data));
+reg('remote_status',     m => { setRemote(1, m.battery); addEvt(`Phone battery: ${m.battery}%`); });
+
+reg('remote_connected', m => {
+  setRemote(m.count);
+  addMsg('SYSTEM', `Remote device linked. ${m.count} connection(s) active.`, 's');
+  addEvt(`Remote connected (${m.count} total)`, 'hi');
+  orbReact('LINK ESTABLISHED', 1500);
+});
+
+reg('remote_disconnected', m => {
+  setRemote(m.count);
+  addEvt('Remote disconnected', 'al');
+  if (m.count === 0) addMsg('SYSTEM', 'Remote link dropped.', 's');
+});
+
+reg('test_signal', () => {
+  flash(); flash();
+  addMsg('SIGNAL', '⚡ Signal Received from Sir\'s Mobile — All systems nominal.', 'sig');
+  orbReact('SIGNAL LOCK', 2500);
+  addEvt('TEST SIGNAL received', 'hi');
+});
+
+reg('gigagenie_command', m => {
+  addMsg('GIGA GENIE ▶', m.query, 'r');
+  addMsg('JARVIS', m.message, 'j');
+  orbReact('GIGA GENIE', 3000);
+  addEvt('GiGA Genie command received', 'hi');
+  flash();
+});
+
+reg('reactor_state', m => {
+  applyReactorState(m.energy_saving);
+  addEvt('Reactor: ' + (m.energy_saving ? 'ENERGY SAVE' : 'FULL POWER'),
+         m.energy_saving ? 'al' : 'hi');
+});
+
+reg('system_update', m => {
+  addMsg('GITHUB ACTIONS', m.message, 'hi');
+  addEvt('Deploy OK — ' + m.sha, 'hi');
+  showDeployBanner(m.message, false);
+  flash();
+  orbReact('SYSTEM UPDATE', 4000);
+});
+
+reg('deploy_failed', m => {
+  addMsg('DEPLOY ERROR', m.message, 'a');
+  addEvt('Deploy FAILED — ' + m.sha, 'al');
+  showDeployBanner(m.message, true);
+  flash();
+  orbReact('DEPLOY FAIL', 6000);
+});
+
+reg('calendar_data', m => {
+  renderCalendar(m.date, m.events);
+  addEvt(`Schedule synced: ${(m.events||[]).length} event(s)`, 'hi');
+  orbReact('CALENDAR SYNC', 1500);
+});
+
+reg('service_online', m => {
+  addEvt(`Service online: ${m.service}`, 'hi');
+});
+
+reg('dopamine_session_start', m => {
+  addMsg('DOPAMINE GUARD', m.message, 'j');
+  addEvt(`Focus session: ${m.minutes} min`, 'hi');
+  orbReact('FOCUS MODE', 2000);
+});
+
+reg('dopamine_session_end', m => {
+  const s = m.summary || {};
+  addMsg('DOPAMINE GUARD', m.message, 'j');
+  addEvt(`Session ended — ${s.alerts_sent ?? 0} alerts`, s.alerts_sent > 0 ? 'al' : 'hi');
+});
+
+reg('dopamine_alert', m => {
+  addMsg('DOPAMINE GUARD', m.message, 'a');
+  addAlert(m.message);
+  orbReact('DISTRACTION!', 2500);
+  flash();
+});
 
 connect();
 

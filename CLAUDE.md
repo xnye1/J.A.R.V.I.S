@@ -21,20 +21,42 @@
 ## Architecture Overview
 
 ```
-frontend/               React Native (Expo) — mobile app (scaffold, phone unavailable)
-  mobile/App.js         Phase 11.1 scaffold — expo-battery + expo-calendar
+frontend/
+  mobile/App.js           Phase 11.1 scaffold — expo-battery + expo-calendar (inactive)
 backend/
-  main.py               FastAPI core: REST + WebSocket hub + Reactor state + Calendar bridge
+  main.py                 Entry point: app setup · lifespan · WS hub · page routes ONLY (~254L)
+  api/
+    models.py             All Pydantic request/response models
+    routes.py             All REST endpoints as APIRouter (mounted by main.py)
   core/
-    persona.py          JarvisPersona — Claude API wrapper (simulation fallback)
-    memory.py           Conversation memory
-    system_info.py      [Phase 11] psutil telemetry: CPU / MEM / DISK / Battery
+    state.py              Singleton global state — energy_saving, counters, service flags
+    dispatcher.py         Priority-queue HUD notification dispatcher (CRITICAL→LOW)
+    persona.py            Hybrid-Adaptive JarvisPersona — Claude API + simulation fallback
+    memory.py             Redis-backed conversation history (local fallback)
+    system_info.py        psutil telemetry: CPU / MEM / DISK / Battery
+  services/
+    __init__.py           ServiceRegistry — collective start/stop, name lookup
+    base_service.py       Abstract base class for all services (lifecycle + emit helpers)
+    memory_service.py     Vector-DB-ready semantic memory (local dict → ChromaDB → Pinecone)
+    dopamine_guard.py     Focus session monitor — psutil process scan + Pomodoro timer
   system/
-    monitor.py          ProactiveEngine — threshold alerts (battery/CPU/MEM)
+    monitor.py            ProactiveEngine — threshold alerts (battery/CPU/MEM)
   static/
-    hud.html            Laptop HUD — starship display, orb, telemetry, reactor switch, calendar
-    remote.html         Virtual controller — chat, test signal, reactor switch, calendar push
+    hud.html              Laptop HUD — Widget Registry pattern (reg() per event type)
+    remote.html           Virtual controller — chat, reactor, calendar, focus session
 ```
+
+### Notification Priority (dispatcher.py)
+| Level | int | Usage |
+|---|---|---|
+| CRITICAL | 1 | Deploy failures, security alerts |
+| HIGH | 2 | JARVIS AI responses, proactive alerts, dopamine warnings |
+| NORMAL | 3 | Telemetry, calendar sync, test signals |
+| LOW | 4 | Service online notices, soft info |
+
+### HUD Widget Registry (hud.html)
+New event types are added as `reg('type', handler)` — zero changes to WS connect() logic.
+Current handlers: connected · pong · remote_speaking · chat_response · proactive_alert · orb_react · status · remote_status · remote_connected · remote_disconnected · test_signal · gigagenie_command · reactor_state · system_update · deploy_failed · calendar_data · service_online · dopamine_session_start · dopamine_session_end · dopamine_alert
 
 ### WebSocket Protocol
 
@@ -97,6 +119,7 @@ Toggle via: HUD switch · Remote switch · `POST /reactor` · WS `reactor_toggle
 | 12 | Data Cascade animation — dual side-panel hex streams, 30FPS, reactor sync | `static/hud.html` — `DataCascade` class, canvas#cascade-l/r |
 | 14 | CI/CD pipeline — GitHub Actions auto-deploy + HUD webhook notification | `.github/workflows/deploy.yml`, `POST /deploy-notify` in `main.py` |
 | Persona | Hybrid-Adaptive identity engine — 4-mode behavioral matrix, domain awareness | `core/persona.py` — `IDENTITY` dict, `SYSTEM_PROMPT`, `GET /persona` |
+| 15 | Modular architecture — state singleton, priority dispatcher, service layer, Widget Registry HUD | `core/state.py`, `core/dispatcher.py`, `services/`, `api/`, `main.py` refactor |
 
 ### Phase 11.2 Deliverables (latest)
 
