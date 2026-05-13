@@ -1,0 +1,1000 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>J.A.R.V.I.S. v3.0</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+/* ── Reset & Variables ─────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --c-primary:   #00E5FF;
+  --c-secondary: #A100FF;
+  --c-alert:     #FF003C;
+  --c-accent:    #39FF14;
+  --c-warn:      #FFBB00;
+  --c-orange:    #FF6B35;
+  --c-bg:        rgba(4, 8, 22, 0.82);
+  --c-border:    rgba(0, 229, 255, 0.20);
+}
+
+html, body {
+  width: 100vw; height: 100vh;
+  overflow: hidden;
+  background: #000;
+  color: var(--c-primary);
+  font-family: 'Orbitron', 'Share Tech Mono', 'Segoe UI', monospace;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ── Main Grid ─────────────────────────────────────────────────────── */
+#hud-grid {
+  display: grid;
+  width: 100%; height: 100%;
+  grid-template-columns: 20fr 46fr 34fr;
+  grid-template-rows: 62fr 38fr;
+  gap: 14px;
+  padding: 20px;
+}
+
+/* ── Glass Panel ───────────────────────────────────────────────────── */
+.panel {
+  background: var(--c-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--c-border);
+  border-top-color: rgba(255, 255, 255, 0.10);
+  border-radius: 14px;
+  box-shadow:
+    0 0 28px rgba(0, 229, 255, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  position: relative;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(28px);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.panel.revealed {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.44s ease, transform 0.48s cubic-bezier(0.34, 1.56, 0.64, 1),
+              border-color 0.15s, box-shadow 0.15s;
+}
+.panel.flickering {
+  border-color: rgba(0, 229, 255, 0.80);
+  box-shadow: 0 0 40px rgba(0, 229, 255, 0.40), inset 0 1px 0 rgba(255,255,255,0.1);
+}
+
+.panel-label {
+  font-size: 7.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--c-primary);
+  padding: 10px 14px 5px;
+  text-shadow: 0 0 8px var(--c-primary);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+#log-panel  { grid-row: 1 / 3; display: flex; flex-direction: column; }
+#core-panel { display: flex; flex-direction: column; align-items: center; }
+#bio-panel  { display: flex; flex-direction: column; }
+#graph-panel{ grid-column: 2 / 4; display: flex; flex-direction: column; }
+
+/* ── Log Stream ────────────────────────────────────────────────────── */
+#log-scroll {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  padding: 0 12px 8px;
+}
+#log-lines { position: absolute; bottom: 0; left: 12px; right: 12px; }
+.log-line {
+  font-family: 'Share Tech Mono', 'Consolas', monospace;
+  font-size: 8.5px;
+  line-height: 16px;
+  color: rgba(0, 229, 255, 0.65);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.log-line.imp  { color: #FFBB00; }
+.log-line.live { color: var(--c-accent); }
+.log-cursor {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px;
+  color: var(--c-accent);
+  display: inline-block;
+  animation: blink 0.85s step-end infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ── Arc Reactor canvas fills remaining space ──────────────────────── */
+#reactor-canvas { display: block; flex: 1; width: 100%; min-height: 0; }
+
+/* ── Bio Rhythm ────────────────────────────────────────────────────── */
+#bio-gauges {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 2px 14px 10px;
+  overflow: hidden;
+}
+.gauge-row { display: flex; flex-direction: column; gap: 3px; }
+.gauge-hdr  { display: flex; justify-content: space-between; align-items: baseline; }
+.gauge-key  { font-size: 6.5px; letter-spacing: 0.14em; opacity: 0.60; }
+.gauge-val  { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; transition: color 0.4s; }
+.gauge-track{ height: 3px; background: rgba(255,255,255,0.07); border-radius: 2px; overflow: hidden; }
+.gauge-fill { height: 100%; border-radius: 2px; transition: width 0.52s cubic-bezier(0.16,1,0.3,1), background 0.4s; }
+
+.hb-dot {
+  display: inline-block;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--c-accent);
+  margin-left: 6px;
+  vertical-align: middle;
+  animation: hb-pulse 2s ease-in-out infinite;
+}
+.hb-dot.lost { background: var(--c-alert); animation: none; }
+@keyframes hb-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.35; transform: scale(0.65); }
+}
+
+/* ── Focus History waveform ────────────────────────────────────────── */
+#waveform-canvas { display: block; flex: 1; width: 100%; min-height: 0; }
+
+/* ── Floating: Message Bubble ──────────────────────────────────────── */
+#msg-bubble {
+  position: fixed;
+  bottom: 68px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 680px;
+  min-width: 300px;
+  padding: 13px 22px;
+  background: rgba(0, 229, 255, 0.06);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(0, 229, 255, 0.32);
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  font-family: 'Share Tech Mono', monospace;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+  z-index: 200;
+  letter-spacing: 0.03em;
+}
+#msg-bubble.show { opacity: 1; }
+#msg-bubble.warning  { border-color: rgba(255,187,0,0.5); color: #FFBB00; }
+#msg-bubble.critical { border-color: rgba(255,0,60,0.6);  color: #FF003C; }
+
+/* ── Floating: Search Results ──────────────────────────────────────── */
+#search-panel {
+  position: fixed;
+  top: 68px;
+  right: -420px;
+  width: 395px;
+  max-height: calc(100vh - 136px);
+  overflow-y: auto;
+  background: rgba(4, 8, 22, 0.93);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(0, 229, 255, 0.25);
+  border-radius: 14px;
+  transition: right 0.40s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 100;
+  scrollbar-width: none;
+}
+#search-panel::-webkit-scrollbar { display: none; }
+#search-panel.show { right: 18px; }
+#search-panel-title {
+  font-size: 7.5px; font-weight: 700; letter-spacing: 0.16em;
+  padding: 12px 14px 6px;
+}
+.s-result {
+  padding: 7px 14px;
+  border-top: 1px solid rgba(0,229,255,0.08);
+  cursor: pointer;
+  transition: background 0.15s;
+  animation: glitch-scan 0.38s ease both;
+}
+.s-result:nth-child(2)  { animation-delay: 0.04s; }
+.s-result:nth-child(3)  { animation-delay: 0.08s; }
+.s-result:nth-child(4)  { animation-delay: 0.12s; }
+.s-result:nth-child(5)  { animation-delay: 0.16s; }
+.s-result:nth-child(6)  { animation-delay: 0.20s; }
+.s-result:hover { background: rgba(0,229,255,0.06); }
+@keyframes glitch-scan {
+  0%   { opacity: 0; clip-path: inset(0 100% 0 0); transform: translateX(10px); }
+  35%  { clip-path: inset(0 55% 0 0); }
+  65%  { clip-path: inset(0 15% 0 0); transform: translateX(-2px); }
+  85%  { clip-path: inset(0 3% 0 0); transform: translateX(1px); }
+  100% { opacity: 1; clip-path: inset(0 0 0 0); transform: translateX(0); }
+}
+.s-rank    { font-size: 6.5px; color: rgba(0,229,255,0.55); margin-bottom: 2px; }
+.s-title   { font-size: 8.5px; font-family:'Share Tech Mono',monospace; color: rgba(220,235,255,0.88); }
+.s-snippet { font-size: 7.5px; font-family:'Share Tech Mono',monospace; color: rgba(140,160,200,0.60); margin-top: 1px; }
+.s-price   { font-size: 8.5px; font-weight: 700; color: var(--c-accent); margin-top: 2px; }
+
+/* ── Floating: Fury Chip ───────────────────────────────────────────── */
+#fury-chip {
+  position: fixed;
+  bottom: 16px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  background: rgba(4,8,22,0.88);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(0,229,255,0.22);
+  border-radius: 20px;
+  font-size: 7.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  z-index: 50;
+  transition: color 0.4s, border-color 0.4s;
+}
+#fury-bar {
+  width: 56px; height: 3px;
+  background: rgba(255,255,255,0.10);
+  border-radius: 2px; overflow: hidden;
+}
+#fury-fill {
+  height: 100%; border-radius: 2px;
+  background: var(--c-accent);
+  transition: width 0.52s ease, background 0.4s;
+}
+#fury-chip.lockdown {
+  animation: fury-lockdown 0.75s ease-in-out infinite;
+  border-color: rgba(255,0,60,0.70);
+}
+@keyframes fury-lockdown {
+  0%,100% { box-shadow: 0 0 0 0 rgba(255,0,60,0.55); }
+  50%      { box-shadow: 0 0 14px 5px rgba(255,0,60,0); }
+}
+
+/* ── Floating: Ripple Canvas ───────────────────────────────────────── */
+#ripple-canvas {
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 400;
+}
+
+/* ── Floating: Error Border ────────────────────────────────────────── */
+#err-border {
+  position: fixed; inset: 3px;
+  border: 5px solid transparent;
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 990;
+}
+#err-border.err { animation: err-pulse 0.33s step-end infinite; }
+@keyframes err-pulse {
+  0%,100% { border-color: rgba(139,0,0,0.68); }
+  50%     { border-color: rgba(139,0,0,0.18); }
+}
+
+/* ── Scanline overlay ──────────────────────────────────────────────── */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(0deg,
+    transparent 0, transparent 2px,
+    rgba(0,0,0,0.022) 2px, rgba(0,0,0,0.022) 4px);
+  pointer-events: none;
+  z-index: 980;
+}
+
+/* ── Boot Screen ───────────────────────────────────────────────────── */
+#boot {
+  position: fixed; inset: 0;
+  background: #000;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  z-index: 1000;
+  transition: opacity 0.52s ease;
+}
+#boot.fade { opacity: 0; }
+#boot.gone { display: none; }
+#boot-canvas { display: block; }
+.boot-scan {
+  font-size: 10px; letter-spacing: 0.22em;
+  color: var(--c-primary);
+  text-shadow: 0 0 10px var(--c-primary);
+  margin-top: 9px; min-height: 15px;
+}
+#boot-welcome {
+  font-size: 21px; font-weight: 900;
+  letter-spacing: 0.06em;
+  color: var(--c-primary);
+  text-shadow: 0 0 28px var(--c-primary), 0 0 60px rgba(0,229,255,0.25);
+  margin-top: 52px;
+  opacity: 0; transition: opacity 0.7s ease;
+}
+#boot-sub {
+  font-size: 11px; font-family: 'Share Tech Mono', monospace;
+  color: rgba(140,200,255,0.70);
+  margin-top: 10px;
+  opacity: 0; transition: opacity 0.7s ease 0.28s;
+}
+</style>
+</head>
+<body>
+
+<!-- Fixed overlays -->
+<div id="err-border"></div>
+<canvas id="ripple-canvas"></canvas>
+
+<!-- HUD Grid -->
+<div id="hud-grid">
+  <div class="panel" id="log-panel">
+    <div class="panel-label">▶ SYS LOG</div>
+    <div id="log-scroll"><div id="log-lines"></div></div>
+  </div>
+
+  <div class="panel" id="core-panel">
+    <div class="panel-label">⬡ ARC REACTOR CORE</div>
+    <canvas id="reactor-canvas"></canvas>
+  </div>
+
+  <div class="panel" id="bio-panel">
+    <div class="panel-label">◈ BIO RHYTHM <span class="hb-dot" id="hb-dot"></span></div>
+    <div id="bio-gauges">
+      <div class="gauge-row" id="gr-focus">
+        <div class="gauge-hdr"><span class="gauge-key">FOCUS</span><span class="gauge-val" id="gv-focus" style="color:var(--c-primary)">50</span></div>
+        <div class="gauge-track"><div class="gauge-fill" id="gf-focus" style="width:50%;background:var(--c-primary)"></div></div>
+      </div>
+      <div class="gauge-row" id="gr-fury">
+        <div class="gauge-hdr"><span class="gauge-key">FURY</span><span class="gauge-val" id="gv-fury" style="color:#FF6B35">0</span></div>
+        <div class="gauge-track"><div class="gauge-fill" id="gf-fury" style="width:0%;background:#FF6B35"></div></div>
+      </div>
+      <div class="gauge-row">
+        <div class="gauge-hdr"><span class="gauge-key">CPU</span><span class="gauge-val" id="gv-cpu" style="color:var(--c-accent)">0</span></div>
+        <div class="gauge-track"><div class="gauge-fill" id="gf-cpu" style="width:0%;background:var(--c-accent)"></div></div>
+      </div>
+      <div class="gauge-row">
+        <div class="gauge-hdr"><span class="gauge-key">MEM</span><span class="gauge-val" id="gv-mem" style="color:var(--c-warn)">0</span></div>
+        <div class="gauge-track"><div class="gauge-fill" id="gf-mem" style="width:0%;background:var(--c-warn)"></div></div>
+      </div>
+      <div class="gauge-row">
+        <div class="gauge-hdr"><span class="gauge-key">DISK</span><span class="gauge-val" id="gv-disk" style="color:rgba(0,229,255,0.55)">0</span></div>
+        <div class="gauge-track"><div class="gauge-fill" id="gf-disk" style="width:0%;background:rgba(0,229,255,0.55)"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="graph-panel">
+    <div class="panel-label">◎ FOCUS HISTORY — NEURAL WAVEFORM</div>
+    <canvas id="waveform-canvas"></canvas>
+  </div>
+</div>
+
+<!-- Floating UI -->
+<div id="msg-bubble"></div>
+
+<div id="search-panel">
+  <div id="search-panel-title">▸ WEB SEARCH</div>
+  <div id="search-results"></div>
+</div>
+
+<div id="fury-chip">
+  <span id="fury-stage">GENTLE</span>
+  <div id="fury-bar"><div id="fury-fill"></div></div>
+  <span id="fury-pct">0%</span>
+</div>
+
+<!-- Boot -->
+<div id="boot">
+  <canvas id="boot-canvas" width="210" height="210"></canvas>
+  <div class="boot-scan" id="boot-scan1"></div>
+  <div class="boot-scan" id="boot-scan2"></div>
+  <div id="boot-welcome">Welcome home, Sir.</div>
+  <div id="boot-sub">System fully operational.</div>
+</div>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script>
+'use strict';
+
+/* ================================================================
+   J.A.R.V.I.S. v3.0 — WebEngine HUD Script
+   ================================================================ */
+
+// ── Shared state ──────────────────────────────────────────────────
+const S = {
+  focus: 50, fury: 0, cpu: 0, mem: 0, disk: 0,
+  stage: 'GENTLE', color: '#39FF14',
+  speaking: false, fetching: false,
+  focusHist: Array(120).fill(50),
+  logs: [],
+};
+
+// ── Helpers ───────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function lerp(a, b, t)    { return a + (b - a) * t; }
+function hexRgb(hex) {
+  return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
+}
+function rgba(hex, a) {
+  const [r,g,b] = hexRgb(hex); return `rgba(${r},${g},${b},${a})`;
+}
+
+// ── Log Stream ────────────────────────────────────────────────────
+const logLines = $('log-lines');
+const MAX_LOG  = 30;
+
+function appendLog(text, important) {
+  const ts = new Date().toTimeString().slice(0,8);
+  S.logs.push({ text: `[${ts}] ${text}`, important, t: Date.now() });
+  if (S.logs.length > MAX_LOG) S.logs.shift();
+  renderLog();
+}
+
+function renderLog() {
+  logLines.innerHTML = '';
+  const visible = S.logs.slice(-22);
+  visible.forEach((l, i) => {
+    const d = document.createElement('div');
+    d.className = 'log-line' +
+      (l.important ? ' imp' : '') +
+      (i === visible.length - 1 ? ' live' : '');
+    d.textContent = l.text;
+    logLines.appendChild(d);
+  });
+  const cur = document.createElement('span');
+  cur.className = 'log-cursor';
+  cur.textContent = '▌';
+  logLines.appendChild(cur);
+}
+
+const ATMOS = [
+  'NEURAL LINK STABLE','SCANNING ENVIRONMENT','COGNITIVE ENGINE ONLINE',
+  'PREDICTIVE MATRIX ACTIVE','SECURITY PERIMETER NOMINAL',
+  'DATA STREAM NOMINAL','SYSTEM INTEGRITY: 100%',
+  'MONITORING USER VITALS','PREFERENCE MODEL UPDATED',
+  'IDLE CYCLE PROCESSING','THERMAL MANAGEMENT: OK',
+];
+setInterval(() => appendLog(ATMOS[Math.floor(Math.random()*ATMOS.length)], false), 2600);
+
+// ── Bio Gauges ────────────────────────────────────────────────────
+function setGauge(key, value, color) {
+  const pct = clamp(value, 0, 100);
+  const fill = $('gf-' + key), val = $('gv-' + key);
+  if (fill) { fill.style.width = pct + '%'; fill.style.background = color; }
+  if (val)  { val.textContent = Math.round(value); val.style.color = color; }
+}
+function refreshGauges() {
+  setGauge('focus', S.focus, '#00E5FF');
+  setGauge('fury',  S.fury,  S.color);
+  setGauge('cpu',   S.cpu,   S.cpu > 85 ? '#FF003C' : '#39FF14');
+  setGauge('mem',   S.mem,   S.mem > 90 ? '#FF003C' : '#FFBB00');
+  setGauge('disk',  S.disk,  'rgba(0,229,255,0.55)');
+}
+
+// ── Fury Chip ─────────────────────────────────────────────────────
+const furyChip = $('fury-chip');
+function updateFuryChip(gauge, stage, color) {
+  $('fury-stage').textContent = stage;
+  $('fury-fill').style.width  = gauge + '%';
+  $('fury-fill').style.background = color;
+  $('fury-pct').textContent   = Math.round(gauge) + '%';
+  furyChip.style.color        = color;
+  furyChip.style.borderColor  = rgba(color, 0.38);
+  furyChip.className          = stage === 'LOCKDOWN' ? 'lockdown' : '';
+}
+
+// ── Message Bubble ────────────────────────────────────────────────
+const bubble = $('msg-bubble');
+let bubbleTimer = null;
+function showBubble(text, importance, ms) {
+  bubble.textContent = text.length > 92 ? text.slice(0,90)+'…' : text;
+  bubble.className   = 'show' + (importance !== 'normal' ? ' ' + importance : '');
+  clearTimeout(bubbleTimer);
+  bubbleTimer = setTimeout(() => { bubble.className = ''; }, ms);
+}
+
+// ── Panel flicker ─────────────────────────────────────────────────
+const panels = document.querySelectorAll('.panel');
+function setFlicker(on) {
+  panels.forEach(p => on ? p.classList.add('flickering') : p.classList.remove('flickering'));
+}
+
+// ── Error border ──────────────────────────────────────────────────
+const errBorder = $('err-border');
+let errTimer = null;
+function flashErr() {
+  errBorder.classList.add('err');
+  clearTimeout(errTimer);
+  errTimer = setTimeout(() => errBorder.classList.remove('err'), 2500);
+}
+
+// ── Ripple canvas ─────────────────────────────────────────────────
+const rc  = $('ripple-canvas');
+const rCtx = rc.getContext('2d');
+const ripples = [];
+function sizeRipple() {
+  rc.width = window.innerWidth; rc.height = window.innerHeight;
+}
+sizeRipple();
+window.addEventListener('resize', sizeRipple);
+
+function addRipple(color, delay) {
+  setTimeout(() => ripples.push({ t: Date.now(), color: color || '#FFBB00' }), delay || 0);
+}
+function drawRipples() {
+  rCtx.clearRect(0,0,rc.width,rc.height);
+  const now = Date.now(), cx = rc.width/2, cy = rc.height/2;
+  const maxR = Math.hypot(cx, cy);
+  for (let i = ripples.length-1; i >= 0; i--) {
+    const age = (now - ripples[i].t) / 900;
+    if (age >= 1) { ripples.splice(i,1); continue; }
+    const [r,g,b] = hexRgb(ripples[i].color);
+    rCtx.beginPath();
+    rCtx.arc(cx, cy, age*maxR, 0, Math.PI*2);
+    rCtx.strokeStyle = `rgba(${r},${g},${b},${0.55*(1-age)})`;
+    rCtx.lineWidth = 2;
+    rCtx.stroke();
+  }
+}
+
+// ── Search Panel ──────────────────────────────────────────────────
+const searchPanel = $('search-panel');
+let searchHideT   = null;
+function showSearch(results, isShop) {
+  const title = $('search-panel-title');
+  const resEl  = $('search-results');
+  title.textContent = isShop ? '▸ SHOP RESULTS' : '▸ WEB SEARCH';
+  title.style.color = isShop ? '#A100FF' : '#00E5FF';
+  resEl.innerHTML   = '';
+
+  results.slice(0,6).forEach((r, i) => {
+    const d = document.createElement('div');
+    d.className = 's-result';
+    d.innerHTML = `<div class="s-rank">#${i+1}</div>
+      <div class="s-title">${(r.title||'').slice(0,48)}</div>
+      ${isShop && r.price_str
+        ? `<div class="s-price">${r.price_str}${r.delivery_days ? ' · '+r.delivery_days+'일':''}</div>`
+        : `<div class="s-snippet">${(r.snippet||'').slice(0,62)}</div>`
+      }`;
+    d.onclick = () => { if (jarvis && r.url) jarvis.open_url(r.url); };
+    resEl.appendChild(d);
+  });
+
+  searchPanel.classList.add('show');
+  clearTimeout(searchHideT);
+  searchHideT = setTimeout(() => searchPanel.classList.remove('show'), 26000);
+}
+
+// ── Arc Reactor Canvas ────────────────────────────────────────────
+const rc2   = $('reactor-canvas');
+const rCtx2 = rc2.getContext('2d');
+
+let rAngle=0, rBreath=0.5, rBreathDir=1;
+let rFetch=0, rVoiceAmp=0, rVoicePh=0;
+let rFocSm=50, rFurSm=0;
+let lastRts=0;
+
+function neonArc(ctx, cx, cy, r, s, e, color, layers) {
+  layers.forEach(([w,a]) => {
+    ctx.beginPath();
+    ctx.arc(cx,cy,r,s,e);
+    ctx.strokeStyle = rgba(color,a);
+    ctx.lineWidth   = w;
+    ctx.lineCap     = 'round';
+    ctx.stroke();
+  });
+}
+function neonRing(ctx, cx, cy, r, color, alpha, layers) {
+  layers.forEach(([w,a]) => {
+    ctx.beginPath();
+    ctx.arc(cx,cy,r,0,Math.PI*2);
+    ctx.strokeStyle = rgba(color, a*alpha);
+    ctx.lineWidth   = w;
+    ctx.stroke();
+  });
+}
+
+function drawReactor(ts) {
+  const dt = Math.min(ts - lastRts, 64); lastRts = ts;
+
+  // Resize canvas to container
+  const par = rc2.parentElement;
+  if (par) {
+    const lh = par.querySelector('.panel-label').offsetHeight || 28;
+    if (rc2.width !== par.clientWidth || rc2.height !== par.clientHeight - lh) {
+      rc2.width  = par.clientWidth;
+      rc2.height = par.clientHeight - lh;
+    }
+  }
+  const W = rc2.width, H = rc2.height;
+  const cx = W/2, cy = H/2;
+  const r  = Math.min(cx, cy) * 0.80;
+  if (r < 10) return;
+
+  rCtx2.clearRect(0,0,W,H);
+
+  // Smooth state
+  rFocSm = lerp(rFocSm, S.focus, 0.05);
+  rFurSm = lerp(rFurSm, S.fury,  0.05);
+
+  // Rotation (faster = more focused)
+  rAngle = (rAngle + (0.0014 + rFocSm/38000)*dt) % (Math.PI*2);
+
+  // Breathing glow
+  rBreath += rBreathDir * 0.00055 * dt;
+  if (rBreath >= 1.0) { rBreath=1.0; rBreathDir=-1; }
+  if (rBreath <= 0.3) { rBreath=0.3; rBreathDir= 1; }
+
+  // Voice amp
+  if (S.speaking) {
+    rVoiceAmp  = Math.min(1, rVoiceAmp + 0.003*dt);
+    rVoicePh  += 0.007*dt;
+  } else {
+    rVoiceAmp = Math.max(0, rVoiceAmp - 0.0014*dt);
+  }
+
+  // Fetch sweep
+  if (S.fetching) rFetch = (rFetch + 0.005*dt) % (Math.PI*2);
+
+  const col = S.color;
+  const glowA = 0.22 + rBreath*0.42;
+
+  // Outer glow ring
+  neonRing(rCtx2,cx,cy,r,col,glowA,[[14,0.08],[6,0.30],[2,0.75],[0.8,1.0]]);
+
+  // 3 rotating arcs
+  for (let i=0;i<3;i++) {
+    const s = rAngle + i*(Math.PI*2/3);
+    neonArc(rCtx2,cx,cy,r*0.88,s,s+1.68,col,[[14,0.025],[7,0.10],[3,0.42],[1.5,0.88]]);
+  }
+
+  // Inner ring
+  neonRing(rCtx2,cx,cy,r*0.52,col,0.5+rBreath*0.5,[[5,0.08],[2,0.28],[1,0.60]]);
+
+  // Voice waveform ring
+  if (rVoiceAmp > 0.01) {
+    rCtx2.beginPath();
+    const pts = 96;
+    for (let i=0;i<=pts;i++) {
+      const ang  = (i/pts)*Math.PI*2;
+      const noise= Math.sin(ang*9+rVoicePh)*0.13*rVoiceAmp
+                 + Math.sin(ang*4+rVoicePh*0.55)*0.065*rVoiceAmp;
+      const rad  = r*0.70*(1+noise);
+      const x = cx+Math.cos(ang)*rad, y = cy+Math.sin(ang)*rad;
+      i===0 ? rCtx2.moveTo(x,y) : rCtx2.lineTo(x,y);
+    }
+    rCtx2.closePath();
+    rCtx2.strokeStyle = rgba(col, 0.60*rVoiceAmp);
+    rCtx2.lineWidth   = 1.8;
+    rCtx2.stroke();
+  }
+
+  // Fetch sweep (purple)
+  if (S.fetching) {
+    neonArc(rCtx2,cx,cy,r*1.05,rFetch,rFetch+2.5,'#A100FF',[[18,0.04],[8,0.18],[2,0.65]]);
+  }
+
+  // Core radial gradient
+  const coreR = r*0.27*rBreath;
+  const g = rCtx2.createRadialGradient(cx,cy,0,cx,cy,coreR);
+  g.addColorStop(0,   'rgba(255,255,255,0.95)');
+  g.addColorStop(0.38, rgba(col, 0.82));
+  g.addColorStop(1,   'transparent');
+  rCtx2.beginPath();
+  rCtx2.arc(cx,cy,coreR,0,Math.PI*2);
+  rCtx2.fillStyle = g;
+  rCtx2.fill();
+
+  // Text labels below reactor
+  rCtx2.save();
+  rCtx2.font     = 'bold 8px Orbitron, monospace';
+  rCtx2.textAlign = 'center';
+  rCtx2.fillStyle  = col;
+  rCtx2.shadowColor = col;
+  rCtx2.shadowBlur  = 7;
+  rCtx2.fillText(`FOCUS  ${Math.round(rFocSm)}`, cx, cy+r+18);
+  rCtx2.fillStyle  = S.color;
+  rCtx2.fillText(`FURY  ${Math.round(rFurSm)}%  [${S.stage}]`, cx, cy+r+33);
+  rCtx2.shadowBlur = 0;
+  rCtx2.restore();
+}
+
+// ── Focus Waveform ────────────────────────────────────────────────
+const wfc  = $('waveform-canvas');
+const wCtx = wfc.getContext('2d');
+
+function drawWaveform() {
+  const par = wfc.parentElement;
+  if (par) {
+    const lh = par.querySelector('.panel-label').offsetHeight || 28;
+    if (wfc.width !== par.clientWidth || wfc.height !== par.clientHeight - lh) {
+      wfc.width  = par.clientWidth;
+      wfc.height = par.clientHeight - lh;
+    }
+  }
+  const W = wfc.width, H = wfc.height;
+  wCtx.clearRect(0,0,W,H);
+
+  const hist = S.focusHist;
+  const n    = hist.length;
+  const pad  = 14;
+  const uw   = W - pad*2, uh = H - pad*2;
+
+  // Grid
+  [25,50,75].forEach(pct => {
+    const y = pad + uh*(1-pct/100);
+    wCtx.beginPath();
+    wCtx.moveTo(pad,y); wCtx.lineTo(W-pad,y);
+    wCtx.strokeStyle = 'rgba(0,229,255,0.07)';
+    wCtx.lineWidth   = 1;
+    wCtx.stroke();
+    wCtx.fillStyle  = 'rgba(0,229,255,0.30)';
+    wCtx.font       = '6px Orbitron';
+    wCtx.textAlign  = 'left';
+    wCtx.fillText(pct, 2, y+3);
+  });
+
+  // Gradient fill
+  const ag = wCtx.createLinearGradient(0,pad,0,H-pad);
+  ag.addColorStop(0, 'rgba(0,229,255,0.22)');
+  ag.addColorStop(1, 'rgba(0,229,255,0)');
+
+  wCtx.beginPath();
+  for (let i=0;i<n;i++) {
+    const x = pad+(i/(n-1))*uw;
+    const y = pad+uh*(1-clamp(hist[i],0,100)/100);
+    i===0 ? wCtx.moveTo(x,y) : wCtx.lineTo(x,y);
+  }
+  wCtx.lineTo(W-pad,H-pad);
+  wCtx.lineTo(pad,H-pad);
+  wCtx.closePath();
+  wCtx.fillStyle = ag;
+  wCtx.fill();
+
+  // Neon line
+  [[5,0.06],[2,0.45],[1,0.95]].forEach(([w,a]) => {
+    wCtx.beginPath();
+    for (let i=0;i<n;i++) {
+      const x = pad+(i/(n-1))*uw;
+      const y = pad+uh*(1-clamp(hist[i],0,100)/100);
+      i===0 ? wCtx.moveTo(x,y) : wCtx.lineTo(x,y);
+    }
+    wCtx.strokeStyle = rgba('#00E5FF',a);
+    wCtx.lineWidth   = w;
+    wCtx.lineJoin    = 'round';
+    wCtx.stroke();
+  });
+
+  // Live dot + value
+  const ex = W-pad, ey = pad+uh*(1-clamp(hist[n-1],0,100)/100);
+  wCtx.beginPath();
+  wCtx.arc(ex,ey,4,0,Math.PI*2);
+  wCtx.fillStyle    = '#39FF14';
+  wCtx.shadowColor  = '#39FF14';
+  wCtx.shadowBlur   = 9;
+  wCtx.fill();
+  wCtx.shadowBlur   = 0;
+  wCtx.fillStyle    = '#39FF14';
+  wCtx.font         = 'bold 8px Orbitron';
+  wCtx.textAlign    = 'left';
+  wCtx.fillText(Math.round(hist[n-1]), ex+8, ey+4);
+}
+
+// ── Boot Sequence ─────────────────────────────────────────────────
+const bootEl  = $('boot');
+const bCanvas = $('boot-canvas');
+const bCtx    = bCanvas.getContext('2d');
+let bAngle=0, bScale=0, bRafId=null;
+
+function drawBootReactor() {
+  const W=bCanvas.width, H=bCanvas.height, cx=W/2, cy=H/2;
+  const r = Math.min(cx,cy)*0.84*bScale;
+  bCtx.clearRect(0,0,W,H);
+  if (r<2) return;
+  bAngle=(bAngle+0.028)%(Math.PI*2);
+
+  // Outer ring
+  [[8,0.12],[3,0.38],[1,0.82]].forEach(([w,a]) => {
+    bCtx.beginPath(); bCtx.arc(cx,cy,r,0,Math.PI*2);
+    bCtx.strokeStyle=`rgba(0,229,255,${a})`; bCtx.lineWidth=w; bCtx.stroke();
+  });
+  // 3 arcs
+  for(let i=0;i<3;i++){
+    const s=bAngle+i*(Math.PI*2/3);
+    [[10,0.04],[5,0.16],[2,0.68]].forEach(([w,a]) => {
+      bCtx.beginPath(); bCtx.arc(cx,cy,r*0.88,s,s+1.66);
+      bCtx.strokeStyle=`rgba(0,229,255,${a})`;
+      bCtx.lineWidth=w; bCtx.lineCap='round'; bCtx.stroke();
+    });
+  }
+  // Inner ring
+  [[4,0.18],[1,0.58]].forEach(([w,a]) => {
+    bCtx.beginPath(); bCtx.arc(cx,cy,r*0.52,0,Math.PI*2);
+    bCtx.strokeStyle=`rgba(0,229,255,${a})`; bCtx.lineWidth=w; bCtx.stroke();
+  });
+  // Core
+  const g=bCtx.createRadialGradient(cx,cy,0,cx,cy,r*0.28);
+  g.addColorStop(0,'rgba(255,255,255,0.92)');
+  g.addColorStop(0.4,'rgba(0,229,255,0.78)');
+  g.addColorStop(1,'transparent');
+  bCtx.beginPath(); bCtx.arc(cx,cy,r*0.28,0,Math.PI*2);
+  bCtx.fillStyle=g; bCtx.fill();
+}
+
+function typewrite(el, text, i, cb) {
+  if (i <= text.length) {
+    el.textContent = text.slice(0,i) + (i<text.length?'▋':'');
+    setTimeout(()=>typewrite(el,text,i+1,cb), 52);
+  } else if (cb) cb();
+}
+
+function startBoot() {
+  // 1. OutBack expansion 0→650ms
+  const t0 = performance.now();
+  function expand(ts) {
+    const p = Math.min(1,(ts-t0)/650);
+    const c1=1.70158, c3=c1+1;
+    bScale = p<1 ? 1+c3*Math.pow(p-1,3)+c1*Math.pow(p-1,2) : 1;
+    drawBootReactor();
+    if (p<1) { bRafId=requestAnimationFrame(expand); return; }
+    // Continuous spin
+    function spin(){drawBootReactor(); bRafId=requestAnimationFrame(spin);}
+    bRafId=requestAnimationFrame(spin);
+  }
+  requestAnimationFrame(expand);
+
+  // 2. Typewriter at 680ms
+  setTimeout(()=>{
+    typewrite($('boot-scan1'),'INITIATING NEURAL NETWORK...',0,()=>{
+      typewrite($('boot-scan2'),'USER IDENTIFIED:  Sir',0,null);
+    });
+  }, 680);
+
+  // 3. Welcome at 1800ms
+  setTimeout(()=>{
+    $('boot-welcome').style.opacity='1';
+    $('boot-sub').style.opacity='1';
+  }, 1800);
+
+  // 4. Fade boot at 2850ms
+  setTimeout(()=>bootEl.classList.add('fade'), 2850);
+
+  // 5. Kill boot, reveal panels at 3380ms
+  setTimeout(()=>{
+    bootEl.classList.add('gone');
+    cancelAnimationFrame(bRafId);
+    // Stagger-reveal panels
+    const ps=[...$('hud-grid').querySelectorAll('.panel')];
+    ps.forEach((p,i)=>{
+      setTimeout(()=>p.classList.add('revealed'), i*80);
+    });
+    // Glitch flash
+    document.body.style.filter='invert(0.07)';
+    setTimeout(()=>{document.body.style.filter='';},220);
+    appendLog('JARVIS v3.0  boot complete',true);
+  }, 3380);
+}
+
+// ── Main RAF loop ─────────────────────────────────────────────────
+function mainLoop(ts) {
+  drawReactor(ts);
+  drawWaveform();
+  drawRipples();
+  requestAnimationFrame(mainLoop);
+}
+
+// ── QWebChannel setup ─────────────────────────────────────────────
+let jarvis = null;
+
+function initChannel() {
+  if (typeof QWebChannel === 'undefined') {
+    appendLog('Preview mode — QWebChannel unavailable', false);
+    return;
+  }
+  // eslint-disable-next-line no-undef
+  new QWebChannel(qt.webChannelTransport, ch => {
+    jarvis = ch.objects.jarvis;
+
+    jarvis.angerUpdated.connect((gauge, stage, color) => {
+      S.fury=gauge; S.stage=stage; S.color=color;
+      updateFuryChip(gauge, stage, color);
+    });
+
+    jarvis.focusScored.connect(score => {
+      S.focus=score;
+      S.focusHist.push(score);
+      if(S.focusHist.length>120) S.focusHist.shift();
+      refreshGauges();
+    });
+
+    jarvis.sysUpdated.connect((cpu, mem, disk) => {
+      S.cpu=cpu; S.mem=mem; S.disk=disk;
+      refreshGauges();
+    });
+
+    jarvis.logLine.connect((text, important) => appendLog(text, important));
+
+    jarvis.speakStarted.connect((text, importance, ms) => {
+      S.speaking=true;
+      showBubble(text, importance, ms);
+      setFlicker(true);
+      setTimeout(()=>{ S.speaking=false; setFlicker(false); }, ms);
+    });
+
+    jarvis.speakFinished.connect(()=>{ S.speaking=false; setFlicker(false); });
+
+    jarvis.alertFlashed.connect(()=>{ addRipple('#FFBB00'); addRipple('#FFBB00',220); });
+
+    jarvis.agentFetching.connect(on => {
+      S.fetching=on;
+      if(on) appendLog('AGENT  fetching data…',false);
+    });
+
+    jarvis.searchReady.connect(res => showSearch(res, false));
+    jarvis.shopReady.connect(res  => showSearch(res, true));
+
+    jarvis.ghostToggled.connect(ghost => {
+      document.body.style.opacity = ghost ? '0.13' : '1';
+    });
+
+    jarvis.flickering.connect(on => setFlicker(on));
+
+    jarvis.wakeTriggered.connect(evt => {
+      addRipple('#00E5FF'); addRipple('#00E5FF',180);
+      appendLog(`WAKE [${evt}]  JARVIS activated`, true);
+      document.body.style.filter='invert(0.06)';
+      setTimeout(()=>{document.body.style.filter='';},220);
+    });
+
+    jarvis.errorFlash.connect((level, msg) => {
+      flashErr();
+      addRipple('#FF003C');
+      appendLog(`ERR [${level}] ${msg}`, true);
+    });
+
+    jarvis.heartbeatLost.connect(()=>{
+      $('hb-dot').classList.add('lost');
+      appendLog('SERVER ⚠  connection lost', true);
+    });
+
+    jarvis.heartbeatOk.connect(()=>{
+      $('hb-dot').classList.remove('lost');
+      appendLog('SERVER ✓  connection restored', true);
+    });
+
+    jarvis.hud_ready();
+    appendLog('QWebChannel bridge established', true);
+  });
+}
+
+// ── Keyboard: ESC = ghost toggle ──────────────────────────────────
+let ghostOn = false;
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    ghostOn = !ghostOn;
+    document.body.style.transition = 'opacity 0.8s ease';
+    document.body.style.opacity    = ghostOn ? '0.12' : '1';
+    if (jarvis) jarvis.play_servo();
+  }
+});
+
+// ── Entry ─────────────────────────────────────────────────────────
+window.addEventListener('load', () => {
+  startBoot();
+  requestAnimationFrame(mainLoop);
+  setTimeout(initChannel, 120);
+});
+</script>
+</body>
+</html>

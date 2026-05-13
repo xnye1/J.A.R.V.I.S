@@ -2,7 +2,8 @@
 # Target RAM budget: < 200 MB total process RSS
 
 # ── UI overlay ──────────────────────────────────────────────────────────────
-PyQt6>=6.6.0            # transparent overlay; no QtWebEngine, no QML
+PyQt6>=6.6.0
+PyQt6-WebEngine>=6.6.0  # QWebEngineView + QWebChannel for hybrid HTML/CSS/JS HUD
 
 # ── WebSocket receiver ───────────────────────────────────────────────────────
 websockets>=12.0        # already in root requirements — kept here for clarity
