@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import random
 import threading
 import time
@@ -119,15 +120,26 @@ class _SysBridge(QObject):
 class _LogBridge(QObject):
     line = pyqtSignal(str, bool)
 
+class _SpeakBridge(QObject):
+    # text, importance ("normal"/"warning"/"critical"), estimated_ms
+    started  = pyqtSignal(str, str, int)
+    finished = pyqtSignal()
 
-_anger_bridge = _AngerBridge()
+class _FlickerBridge(QObject):
+    # True = start power-surge flicker, False = stop
+    flickering = pyqtSignal(bool)
+
+
+_anger_bridge   = _AngerBridge()
 _study_bridge = _StudyBridge()
 _ghost_bridge = _GhostBridge()
 _alert_bridge = _AlertBridge()
 _mute_bridge  = _MuteBridge()
 _focus_bridge = _FocusBridge()
-_sys_bridge   = _SysBridge()
-_log_bridge   = _LogBridge()
+_sys_bridge     = _SysBridge()
+_log_bridge     = _LogBridge()
+_speak_bridge   = _SpeakBridge()
+_flicker_bridge = _FlickerBridge()
 
 _sys_state: dict = {"cpu": 0.0, "mem": 0.0, "disk": 0.0, "focus": 50.0}
 
@@ -227,6 +239,13 @@ class GlassPanel(QWidget):
         self._panel_opacity: float = 0.0
         self._slide_offset:  float = 0.0
 
+        # Flicker state — power-surge border animation while JARVIS speaks
+        self._flicker_mod: float = 0.0
+        self._flicker_timer = QTimer(self)
+        self._flicker_timer.setInterval(50)   # 20 fps
+        self._flicker_timer.timeout.connect(self._tick_flicker)
+        _flicker_bridge.flickering.connect(self._on_flicker)
+
     # ── Qt properties ─────────────────────────────────────────────────────────
 
     @pyqtProperty(float)
@@ -249,6 +268,22 @@ class GlassPanel(QWidget):
 
     # ── Paint helpers ─────────────────────────────────────────────────────────
 
+    def _on_flicker(self, active: bool) -> None:
+        if active:
+            self._flicker_timer.start()
+        else:
+            self._flicker_timer.stop()
+            self._flicker_mod = 0.0
+            self.update()
+
+    def _tick_flicker(self) -> None:
+        """Power-surge: random spikes with exponential decay, ~20 fps."""
+        if random.random() > 0.72:
+            self._flicker_mod = random.uniform(-0.55, 1.4)
+        else:
+            self._flicker_mod *= 0.50
+        self.update()
+
     def _begin_paint(self, p: QPainter) -> None:
         """Apply opacity + slide translation. Call once at paintEvent start."""
         p.setOpacity(self._panel_opacity)
@@ -256,7 +291,7 @@ class GlassPanel(QWidget):
             p.translate(0.0, self._slide_offset)
 
     def _paint_bg(self, p: QPainter) -> None:
-        """Frosted glass card: dark fill + top sheen + cyan border."""
+        """Frosted glass card: dark fill + top sheen + flicker-reactive border."""
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         clip = QPainterPath()
         clip.addRoundedRect(r, 14, 14)
@@ -264,7 +299,10 @@ class GlassPanel(QWidget):
         p.fillRect(self.rect(), _C_BG)
         p.fillRect(0, 0, self.width(), 1, QColor(255, 255, 255, 28))
         p.setClipping(False)
-        p.setPen(QPen(_C_BORDER, 1.0))
+        # Border alpha surges with flicker_mod (85 ± up to 120)
+        border_c = QColor(_C_BORDER)
+        border_c.setAlpha(min(255, max(15, int(85 + self._flicker_mod * 120))))
+        p.setPen(QPen(border_c, 1.0 + max(0.0, self._flicker_mod * 0.8)))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawPath(clip)
 
@@ -284,10 +322,20 @@ class ArcReactorCore(GlassPanel):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
-        self._angle:    float = 0.0
-        self._color:    str   = _DEFAULT_COLOR
-        self._stage:    str   = "GENTLE"
+        self._angle:      float = 0.0
+        self._color:      str   = _DEFAULT_COLOR
+        self._stage:      str   = "GENTLE"
         self._breath_val: float = 0.5
+
+        # Voice reactivity state
+        self._is_speaking: bool  = False
+        self._voice_raw:   float = 0.0   # smoothed oscillator
+        self._voice_amp:   float = 0.0   # current amplitude (0-1)
+        self._importance:  str   = "normal"
+
+        self._voice_timer = QTimer(self)
+        self._voice_timer.setInterval(30)   # ~33 fps waveform update
+        self._voice_timer.timeout.connect(self._tick_voice)
 
         # Rolling display values
         self._av_fury  = AnimatedValue(0.0,  500, self)
@@ -358,6 +406,44 @@ class ArcReactorCore(GlassPanel):
         self._color = color
         self.update()
 
+    # Importance → peak voice amplitude multiplier
+    _IMP_AMP: dict[str, float] = {
+        "normal":   0.15,
+        "warning":  0.28,
+        "critical": 0.52,
+    }
+
+    def start_speaking(self, importance: str = "normal") -> None:
+        self._is_speaking = True
+        self._importance  = importance
+        if not self._voice_timer.isActive():
+            self._voice_timer.start()
+
+    def stop_speaking(self) -> None:
+        self._is_speaking = False   # timer keeps running until decay → 0
+
+    def _tick_voice(self) -> None:
+        """
+        Simulate voice waveform: sine oscillation at speech-rate freq + noise.
+        Smooth with α=0.45 low-pass filter.  Decays on stop_speaking().
+        """
+        if self._is_speaking:
+            freq   = 7.5 + random.uniform(-2.0, 2.5)   # 5.5–10 Hz speech range
+            target = (
+                0.50
+                + 0.40 * math.sin(time.time() * freq * math.pi)
+                + random.uniform(-0.08, 0.08)
+            )
+            target = max(0.0, min(1.0, target))
+            self._voice_raw = self._voice_raw * 0.55 + target * 0.45
+        else:
+            self._voice_raw *= 0.86   # exponential decay after speaking ends
+
+        self._voice_amp = self._voice_raw
+        if self._voice_amp < 0.004 and not self._is_speaking:
+            self._voice_timer.stop()
+        self.update()
+
     # ── Painting ──────────────────────────────────────────────────────────────
 
     def paintEvent(self, _e) -> None:
@@ -403,16 +489,26 @@ class ArcReactorCore(GlassPanel):
         # Mid ring
         _neon_ellipse(p, QPointF(cx, cy), r * 0.52, r * 0.52, color, _NEON_THIN)
 
-        # Core glow — alpha modulated by breathing animation
-        core_r     = r * 0.26
-        core_alpha = int(160 + 90 * self._breath_val)   # 160→250
-        core_c     = QColor(color); core_c.setAlpha(core_alpha)
+        # Core glow — breath + voice scale pulse
+        imp_fac   = self._IMP_AMP.get(self._importance, 0.15)
+        voice_add = self._voice_amp * imp_fac
+        # Radius expands with voice amplitude (more important = bigger pulse)
+        core_r    = r * 0.26 * (1.0 + voice_add * 0.85)
+        core_alpha = min(255, int(160 + 90 * self._breath_val + 65 * voice_add))
+        core_c    = QColor(color); core_c.setAlpha(core_alpha)
         p.setBrush(core_c)
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(QPointF(cx, cy), core_r, core_r)
 
-        # Bright centre dot (also breathes)
-        dot_alpha = int(200 + 55 * self._breath_val)
+        # Extra soft halo that blooms during speech
+        if self._voice_amp > 0.06:
+            halo_c = QColor(color)
+            halo_c.setAlpha(int(45 * self._voice_amp * imp_fac / 0.15))
+            p.setBrush(halo_c)
+            p.drawEllipse(QPointF(cx, cy), core_r * 1.65, core_r * 1.65)
+
+        # Bright centre dot (breathes + voice)
+        dot_alpha = min(255, int(200 + 55 * self._breath_val + 45 * voice_add))
         p.setBrush(QColor(255, 255, 255, dot_alpha))
         p.drawEllipse(QPointF(cx, cy), core_r * 0.35, core_r * 0.35)
 
@@ -738,6 +834,170 @@ class FocusHistoryGraph(GlassPanel):
         p.drawText(int(lx) + 8, int(ly) + 4, f"{pts[-1]:.0f}")
 
 
+# ── MessageBubble ─────────────────────────────────────────────────────────────
+
+_IMP_COLORS = {
+    "normal":   _C_CYAN,
+    "warning":  _C_YELLOW,
+    "critical": _C_RED,
+}
+
+class MessageBubble(QWidget):
+    """
+    Floating center-screen text card that appears when JARVIS speaks.
+
+    On show_message():
+      1. Three ripple circles expand outward from the card center (150 ms apart)
+      2. Card + text fade in (300 ms InOutQuad)
+      3. Auto-fades out after `duration_ms`
+
+    Importance colours:
+      normal   → cyan
+      warning  → yellow
+      critical → red
+    """
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        self._text:       str   = ""
+        self._importance: str   = "normal"
+        self._opacity:    float = 0.0
+        self._ripples:    list[dict] = []
+
+        # Ripple repaint timer (33 ms ≈ 30 fps, stops when empty)
+        self._rip_timer = QTimer(self)
+        self._rip_timer.setInterval(33)
+        self._rip_timer.timeout.connect(self.update)
+
+        # Fade-in / fade-out animation
+        self._fade_anim = QPropertyAnimation(self, b"bubble_opacity", self)
+        self._fade_anim.setDuration(300)
+        self._fade_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self._fade_anim.finished.connect(self._on_fade_done)
+
+        # Auto-hide countdown
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self._start_fadeout)
+
+        self.hide()
+
+    # ── Qt property ───────────────────────────────────────────────────────────
+
+    @pyqtProperty(float)
+    def bubble_opacity(self) -> float:
+        return self._opacity
+
+    @bubble_opacity.setter  # type: ignore[no-redef]
+    def bubble_opacity(self, v: float) -> None:
+        self._opacity = v
+        self.update()
+
+    # ── Public API ────────────────────────────────────────────────────────────
+
+    def show_message(self, text: str, importance: str, duration_ms: int) -> None:
+        self._text       = text[:88] + ("…" if len(text) > 88 else "")
+        self._importance = importance
+        self._reposition()
+
+        # Three staggered ripples
+        for i in range(3):
+            QTimer.singleShot(
+                i * 160,
+                lambda: self._ripples.append({
+                    "start_ms": QDateTime.currentMSecsSinceEpoch(),
+                    "color": _IMP_COLORS.get(self._importance, _C_CYAN),
+                }),
+            )
+        if not self._rip_timer.isActive():
+            self._rip_timer.start()
+
+        # Fade in
+        self._fade_anim.stop()
+        self._fade_anim.setStartValue(self._opacity)
+        self._fade_anim.setEndValue(1.0)
+        self._fade_anim.start()
+        self.show()
+        self.raise_()
+
+        # Schedule fade-out
+        self._hide_timer.stop()
+        self._hide_timer.start(duration_ms)
+
+    def _reposition(self) -> None:
+        if self.parent():
+            pw = self.parent().width()
+            ph = self.parent().height()
+            self.setGeometry(pw // 2 - 380, int(ph * 0.40), 760, 78)
+
+    def _start_fadeout(self) -> None:
+        self._fade_anim.stop()
+        self._fade_anim.setStartValue(self._opacity)
+        self._fade_anim.setEndValue(0.0)
+        self._fade_anim.start()
+
+    def _on_fade_done(self) -> None:
+        if self._opacity <= 0.01:
+            self._rip_timer.stop()
+            self.hide()
+
+    # ── Painting ──────────────────────────────────────────────────────────────
+
+    def paintEvent(self, _e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setOpacity(self._opacity)
+
+        w, h   = self.width(), self.height()
+        cx, cy = w / 2.0, h / 2.0
+        color  = _IMP_COLORS.get(self._importance, _C_CYAN)
+
+        # ── Ripples (behind card) ──────────────────────────────────────────────
+        now_ms = QDateTime.currentMSecsSinceEpoch()
+        alive: list[dict] = []
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for rip in self._ripples:
+            t = (now_ms - rip["start_ms"]) / 820.0
+            if t >= 1.0:
+                continue
+            max_r = max(w, h) * 0.90
+            rc    = QColor(rip["color"]); rc.setAlpha(int(115 * (1.0 - t)))
+            p.setPen(QPen(rc, 1.8))
+            p.drawEllipse(QPointF(cx, cy), t * max_r, t * max_r)
+            alive.append(rip)
+        self._ripples = alive
+        if not self._ripples:
+            self._rip_timer.stop()
+
+        # ── Card ──────────────────────────────────────────────────────────────
+        card = QPainterPath()
+        card.addRoundedRect(QRectF(0, 0, w, h), 12, 12)
+        p.setClipPath(card)
+        p.fillRect(self.rect(), QColor(4, 8, 22, 205))
+        p.fillRect(0, 0, w, 1, QColor(255, 255, 255, 30))
+        p.setClipping(False)
+
+        bc = QColor(color); bc.setAlpha(170)
+        p.setPen(QPen(bc, 1.5))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(card)
+
+        # Left accent bar
+        bar_c = QColor(color); bar_c.setAlpha(200)
+        p.fillRect(0, 10, 3, h - 20, bar_c)
+
+        # ── Text ──────────────────────────────────────────────────────────────
+        p.setPen(QColor(color))
+        p.setFont(QFont("Orbitron, Share Tech Mono, monospace", 11, QFont.Weight.Bold))
+        p.drawText(
+            QRectF(18, 0, w - 36, h),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            self._text,
+        )
+
+
 # ── BootScreen ────────────────────────────────────────────────────────────────
 
 class BootScreen(QWidget):
@@ -986,6 +1246,9 @@ class JarvisFullHUD(QWidget):
         self._glitch_timer.setInterval(33)
         self._glitch_timer.timeout.connect(self.update)
 
+        # ── Message bubble (floating JARVIS speech card) ──────────────────────
+        self._msg_bubble = MessageBubble(self)
+
         # ── Boot screen ───────────────────────────────────────────────────────
         self._boot = BootScreen(self)
         self._boot.panels_reveal.connect(self._reveal_panels)
@@ -998,6 +1261,8 @@ class JarvisFullHUD(QWidget):
         _sys_bridge.updated.connect(self._on_sys)
         _alert_bridge.flashed.connect(self._on_alert)
         _ghost_bridge.toggled.connect(self._set_ghost)
+        _speak_bridge.started.connect(self._on_speaking_started)
+        _speak_bridge.finished.connect(self._on_speaking_done)
 
     # ── hud_opacity Qt property ───────────────────────────────────────────────
 
@@ -1031,6 +1296,28 @@ class JarvisFullHUD(QWidget):
     def _on_anger(self, gauge: float, stage: str, color: str) -> None:
         self._core.set_anger(gauge, stage, color)
         self._bio.set_anger(gauge)
+        # LOCKDOWN stage → critical speaking pulse
+        if stage == "LOCKDOWN" and not self._core._is_speaking:
+            self._core.start_speaking("critical")
+            QTimer.singleShot(4000, self._core.stop_speaking)
+
+    def _on_speaking_started(self, text: str, importance: str, duration: int) -> None:
+        """
+        Activate vocal reactive visuals:
+          - ArcReactorCore: voice-pulse at given importance amplitude
+          - MessageBubble: ripple + text card
+          - All GlassPanels: power-surge border flicker
+        Duration auto-stops everything.
+        """
+        self._core.start_speaking(importance)
+        self._msg_bubble.show_message(text, importance, duration)
+        _flicker_bridge.flickering.emit(True)
+        _log_bridge.line.emit(f"JARVIS [{importance.upper()}]: {text[:50]}", True)
+        QTimer.singleShot(duration, self._on_speaking_done)
+
+    def _on_speaking_done(self) -> None:
+        self._core.stop_speaking()
+        _flicker_bridge.flickering.emit(False)
 
     def _on_focus(self, score: float) -> None:
         self._core.set_focus(score)
@@ -1228,8 +1515,20 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
                             str(msg.get("reason", "")),
                         )
 
+                    elif mtype == "chat_response":
+                        text = str(msg.get("message", msg.get("response", "")))
+                        if text:
+                            duration = max(2200, len(text) * 55)
+                            _speak_bridge.started.emit(text, "normal", duration)
+
                     elif mtype == "proactive_alert":
-                        text = str(msg.get("message", ""))
+                        text     = str(msg.get("message", ""))
+                        severity = str(msg.get("severity", "NORMAL")).upper()
+                        imp      = ("critical" if severity == "CRITICAL"
+                                    else "warning" if severity in ("HIGH", "WARNING")
+                                    else "normal")
+                        duration = max(3000, len(text) * 60)
+                        _speak_bridge.started.emit(text, imp, duration)
                         _alert_bridge.flashed.emit(text)
                         _log_bridge.line.emit(f"ALERT  {text[:60]}", True)
 
