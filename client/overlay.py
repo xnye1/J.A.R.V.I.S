@@ -86,11 +86,12 @@ def _emit(sig: str, *args) -> None:
     before entering this function's try/except block.
 
     Guard order:
-      1. _bridge_gone flag  — cheapest check; set on app aboutToQuit
-      2. sip.isdeleted()    — C++ object already freed
-      3. except RuntimeError — any remaining race between check and emit
+      1. _bridge is None    — not yet initialized (QApplication not ready)
+      2. _bridge_gone flag  — cheapest check; set on app aboutToQuit
+      3. sip.isdeleted()    — C++ object already freed
+      4. except RuntimeError — any remaining race between check and emit
     """
-    if _bridge_gone:
+    if _bridge is None or _bridge_gone:
         return
     try:
         if _HAS_SIP and _sip.isdeleted(_bridge):  # type: ignore[arg-type]
@@ -155,7 +156,9 @@ class JarvisDataBridge(QObject):
             pass  # non-critical
 
 
-_bridge = JarvisDataBridge()
+# _bridge is initialized in JarvisOverlay.run() AFTER QApplication is created.
+# Creating a QObject before QApplication exists is undefined behaviour in Qt.
+_bridge: JarvisDataBridge | None = None
 _sys_state: dict[str, float] = {"cpu": 0.0, "mem": 0.0, "disk": 0.0, "focus": 50.0}
 
 
@@ -494,6 +497,10 @@ class JarvisOverlay:
         app = QApplication.instance() or QApplication(sys.argv)
         app.setApplicationName("JARVIS")
 
+        # QApplication now exists — safe to create QObject subclasses
+        global _bridge
+        _bridge = JarvisDataBridge()
+
         # Diagnostics: error logger + HUD bridge
         from client.diagnostics import setup_diagnostics
         setup_diagnostics(
@@ -533,8 +540,9 @@ class JarvisOverlay:
             hud.awaken()
 
         def _on_quit() -> None:
-            global _bridge_gone
+            global _bridge_gone, _bridge
             _bridge_gone = True
+            _bridge = None  # prevent any post-destroy signal emission
 
         app.aboutToQuit.connect(_on_quit)
 
