@@ -29,9 +29,9 @@ import logging
 log = logging.getLogger("jarvis.client")
 
 # ── 2. Resolve server coordinates ─────────────────────────────────────────────
-_SERVER = os.getenv("JARVIS_SERVER", "158.180.78.104")
-_PORT   = int(os.getenv("JARVIS_PORT", "8000"))
-_WS_URL = f"ws://{_SERVER}:{_PORT}/ws"
+_SERVER    = os.getenv("JARVIS_SERVER", "158.180.78.104")
+_PORT      = int(os.getenv("JARVIS_PORT", "8000"))
+_WS_URL    = f"ws://{_SERVER}:{_PORT}/ws"
 _HTTP_BASE = f"http://{_SERVER}:{_PORT}"
 
 
@@ -40,7 +40,7 @@ def main() -> None:
     log.info("Logs → %s", _log_db)
 
     from client.overlay import JarvisOverlay
-    overlay = JarvisOverlay(ws_url=_WS_URL)
+    overlay = JarvisOverlay(ws_url=_WS_URL, http_base=_HTTP_BASE)
     overlay.run()
     # overlay.run() blocks until Qt window is closed
 

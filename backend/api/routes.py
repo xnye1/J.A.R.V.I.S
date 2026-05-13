@@ -16,6 +16,7 @@ log = logging.getLogger("jarvis.routes")
 from fastapi import APIRouter, Header, HTTPException
 
 from api.models import (
+    AlertRequest,
     AppOpenRequest, BulkSyncRequest, DormBulkSyncRequest, StudyPlanRequest,
     CalendarPayload, ChatRequest, ChatResponse, DeployNotifyRequest,
     FocusRequest, GigaGenieRequest, ReactorRequest,
@@ -412,6 +413,24 @@ async def shortcut_focus_toggle():
         return {**result, "toggled": "off"}
     session = await guard.begin_session(25)
     return {"status": "started", "minutes": session.duration_minutes, "toggled": "on"}
+
+
+# ── Client Alert Injection ───────────────────────────────────────────────────
+
+_SEVERITY_PRIORITY = {"HIGH": Priority.HIGH, "NORMAL": Priority.NORMAL, "LOW": Priority.LOW}
+
+@router.post("/alert")
+async def inject_alert(req: AlertRequest):
+    """
+    Accept an alert from any client process (overlay, mobile) and broadcast
+    it as a proactive_alert WS event to all HUD clients.
+    Used by FocusScoreEngine (break recommendation) and PredictiveAlert (tardiness).
+    """
+    priority = _SEVERITY_PRIORITY.get(req.severity.upper(), Priority.HIGH)
+    await dispatcher.emit({"type": "proactive_alert", "message": req.message}, priority)
+    await dispatcher.emit({"type": "orb_react", "intensity": 0.7, "duration": 2000}, Priority.NORMAL)
+    log.info("[Alert] Injected: %s", req.message[:80])
+    return {"status": "broadcast", "severity": req.severity}
 
 
 # ── Dorm & Briefing ───────────────────────────────────────────────────────────

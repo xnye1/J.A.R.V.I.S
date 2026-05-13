@@ -98,3 +98,9 @@ class DormQueueItem(BaseModel):
 class DormBulkSyncRequest(BaseModel):
     """Batch of HTTP requests queued by DormSyncManager while in dormitory."""
     requests: list[DormQueueItem]
+
+
+class AlertRequest(BaseModel):
+    """Client-injected alert — broadcast as proactive_alert WS event."""
+    message:  str
+    severity: str = "HIGH"   # HIGH | NORMAL | LOW
