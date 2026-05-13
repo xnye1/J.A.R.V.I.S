@@ -21,13 +21,21 @@ from __future__ import annotations
 import os
 
 # ── GPU / driver flags — MUST be set before any Qt module is imported ──────────
-# Fixes "Failed to create GLES3 context": forces Chromium to use software
-# rasterization instead of GPU acceleration (common on laptops/VMs).
-# Note: QSG_RHI_BACKEND is Qt-Quick-only and NOT set here — QWebEngineView
-# uses Chromium's own render pipeline, independent of Qt's scene graph.
+# --disable-gpu            : disable hardware GPU acceleration
+# --in-process-gpu         : run GPU code inside renderer (no separate GPU subprocess)
+#                            prevents the GPU IPC channel from crashing on GLES init
+# --disable-gpu-compositing: use CPU-based compositing instead of GPU compositing
+# --disable-webgl          : our Canvas 2D HUD does not need WebGL; avoids GPU init
+# --disable-dev-shm-usage  : use /tmp instead of /dev/shm (Linux VMs / WSL)
+# --no-sandbox             : already covered by QTWEBENGINE_DISABLE_SANDBOX
 os.environ.setdefault(
     "QTWEBENGINE_CHROMIUM_FLAGS",
-    "--disable-gpu --disable-dev-shm-usage --no-sandbox",
+    "--disable-gpu "
+    "--in-process-gpu "
+    "--disable-gpu-compositing "
+    "--disable-webgl "
+    "--disable-dev-shm-usage "
+    "--no-sandbox",
 )
 os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 # ──────────────────────────────────────────────────────────────────────────────
@@ -77,6 +85,7 @@ _STAGE_COLORS: dict[str, str] = {
 # Last received shop results — checked on clap-wake
 _last_shop:   list[dict[str, Any]] = []
 _bridge_gone: bool = False  # set True by QApplication.aboutToQuit signal
+_hud_ref:     "WebHUD | None" = None  # prevents GC of the QWebEngineView window
 
 
 def _emit(sig: str, *args) -> None:
@@ -542,18 +551,22 @@ class JarvisOverlay:
         # Python 3.14 converts the Chromium subprocess-spawn signal to
         # KeyboardInterrupt — suppress SIGINT for the entire WebHUD init block.
         def _init_hud() -> None:
+            global _hud_ref
             _sig = _signal.signal(_signal.SIGINT, _signal.SIG_IGN)
             try:
                 hud = WebHUD(audio_response=audio)
             finally:
                 _signal.signal(_signal.SIGINT, _sig)
+            _hud_ref = hud  # pin to module scope — prevents Python GC from
+                            # destroying the QWebEngineView and closing the window
             log.info("[Overlay] Awakening sequence start.")
             hud.awaken()
 
         def _on_quit() -> None:
-            global _bridge_gone, _bridge
+            global _bridge_gone, _bridge, _hud_ref
             _bridge_gone = True
-            _bridge = None  # prevent any post-destroy signal emission
+            _bridge = None   # prevent any post-destroy signal emission
+            _hud_ref = None  # allow GC after Qt has already cleaned up
 
         app.aboutToQuit.connect(_on_quit)
 
