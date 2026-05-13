@@ -27,7 +27,7 @@ import webbrowser
 from typing import Any
 
 try:
-    from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal, pyqtSlot
+    from PyQt6.QtCore import QObject, QTimer, QUrl, Qt, pyqtSignal, pyqtSlot
     from PyQt6.QtWidgets import QApplication
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     from PyQt6.QtWebEngineCore import QWebEngineSettings
@@ -37,6 +37,7 @@ except ImportError:
     _HAS_ENGINE = False
     # Stubs so module-level code still parses
     QObject = object  # type: ignore[assignment,misc]
+    Qt = None  # type: ignore[assignment]
     def pyqtSignal(*a, **k): return None  # type: ignore[misc]
     def pyqtSlot(*a, **k):                # type: ignore[misc]
         def _d(f): return f
@@ -132,7 +133,6 @@ class WebHUD:
         self._audio = audio_response
         self._view  = QWebEngineView()
 
-        from PyQt6.QtCore import Qt
         self._view.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -427,7 +427,12 @@ class JarvisOverlay:
 
     def run(self) -> None:
         import sys
+
+        # Must be set BEFORE QApplication — required for Qt WebEngine on Windows
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+
         app = QApplication.instance() or QApplication(sys.argv)
+        app.setApplicationName("JARVIS")
 
         # Diagnostics: error logger + HUD bridge
         from client.diagnostics import setup_diagnostics
@@ -441,13 +446,11 @@ class JarvisOverlay:
         audio = AudioResponse()
         audio.preload()
 
-        # WebHUD
-        hud = WebHUD(audio_response=audio)
-
-        # WebSocket receiver thread
+        # WebSocket receiver thread — start before event loop
+        ws_url, http_base = self._ws_url, self._http_base
         ws_thread = threading.Thread(
             target = _run_ws_thread,
-            args   = (self._ws_url, self._http_base),
+            args   = (ws_url, http_base),
             daemon = True,
             name   = "jarvis-ws-overlay",
         )
@@ -461,6 +464,13 @@ class JarvisOverlay:
         )
         hotword.start()
 
-        log.info("[Overlay] Awakening sequence start.")
-        hud.awaken()
+        # Defer WebHUD creation to after the event loop starts.
+        # QWebEngineView spawns the Chromium renderer process, which needs
+        # the Qt event loop running to complete its IPC handshake on Windows.
+        def _init_hud() -> None:
+            hud = WebHUD(audio_response=audio)
+            log.info("[Overlay] Awakening sequence start.")
+            hud.awaken()
+
+        QTimer.singleShot(0, _init_hud)
         sys.exit(app.exec())
