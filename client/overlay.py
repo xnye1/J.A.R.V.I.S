@@ -38,6 +38,10 @@ os.environ.setdefault(
     "--no-sandbox",
 )
 os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+
+# ── High DPI / scaling — must be set before QApplication ─────────────────────
+os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
+os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING",   "1")
 # ──────────────────────────────────────────────────────────────────────────────
 
 import asyncio
@@ -51,6 +55,7 @@ from typing import Any
 
 try:
     from PyQt6.QtCore import QObject, QTimer, QUrl, Qt, pyqtSignal, pyqtSlot
+    from PyQt6.QtGui import QColor
     from PyQt6.QtWidgets import QApplication
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
@@ -213,6 +218,11 @@ class WebHUD:
         self._channel.registerObject("jarvis", _bridge)
         self._page.setWebChannel(self._channel)
         self._view.setPage(self._page)
+
+        # Transparent background — lets backdrop-filter:blur() work correctly
+        # and prevents a white/grey flash before the HTML background renders.
+        self._view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._page.setBackgroundColor(QColor(0, 0, 0, 0))
 
         # Load HUD HTML
         if not _HUD_PATH.exists():

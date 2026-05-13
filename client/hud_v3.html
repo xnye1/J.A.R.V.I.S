@@ -3,9 +3,22 @@
 <head>
 <meta charset="UTF-8">
 <title>J.A.R.V.I.S. v3.0</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
+/* ── Local fonts (no network dependency in QWebEngineView) ────────── */
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: block;
+  src: url('fonts/Orbitron.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Share Tech Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('fonts/ShareTechMono-Regular.woff2') format('woff2');
+}
 /* ── Reset & Variables ─────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
