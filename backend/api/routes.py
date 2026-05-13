@@ -22,14 +22,15 @@ from api.models import (
     FocusRequest, GigaGenieRequest, ReactorRequest,
     RememberRequest, RecallRequest,
 )
-from core.anger_engine  import anger
-from core.dispatcher    import dispatcher, Priority
-from core.dorm_tracker  import dorm_tracker
-from core.fury_tracker  import fury
-from core.persona       import IDENTITY, JarvisPersona
-from core.state         import state
-from core.stealth       import (
-    classify_location, decide_output, FocusMode,
+from core.anger_engine   import anger
+from core.dispatcher     import dispatcher, Priority
+from core.dorm_tracker   import dorm_tracker
+from core.empathy_engine import empathy
+from core.fury_tracker   import fury
+from core.persona        import IDENTITY, JarvisPersona
+from core.state          import state
+from core.stealth        import (
+    classify_location, current_mute_state, decide_output, FocusMode,
     is_academy_hour, is_weekend_hyperfocus,
 )
 from core.system_info   import get_detailed_status, to_dict as status_to_dict
@@ -413,6 +414,47 @@ async def shortcut_focus_toggle():
         return {**result, "toggled": "off"}
     session = await guard.begin_session(25)
     return {"status": "started", "minutes": session.duration_minutes, "toggled": "on"}
+
+
+# ── Mute / Stealth Status ────────────────────────────────────────────────────
+
+@router.get("/mute/status")
+async def mute_status():
+    """Current proactive-alert mute state based on academy schedule + quiet hours."""
+    return current_mute_state()
+
+
+# ── Empathy Engine ────────────────────────────────────────────────────────────
+
+@router.get("/empathy")
+async def empathy_status():
+    """Current condition profile and anger sensitivity multiplier."""
+    return empathy.snapshot()
+
+@router.post("/empathy/refresh")
+async def empathy_refresh():
+    """Force-refresh empathy profile from DB (normally auto-refreshes hourly)."""
+    empathy._last_refresh = 0.0   # invalidate cache
+    return empathy.snapshot()
+
+
+# ── One-Tap Weekly Summary ────────────────────────────────────────────────────
+
+@router.post("/dorm/summary")
+async def dorm_weekly_summary():
+    """
+    Generate a 3-line weekly digest + next-week action plan and broadcast to HUD.
+    Triggered manually (One-Tap) or automatically on dorm exit.
+    """
+    briefing = dorm_tracker._generate_briefing(duration_hrs=0.0, exit_zone="manual")
+    summary  = jarvis.weekly_summary(briefing)
+    payload  = {
+        "type":    "dorm_exit_briefing",
+        **briefing,
+        "summary": summary,
+    }
+    await dispatcher.emit(payload, Priority.HIGH)
+    return {"status": "broadcast", "summary": summary}
 
 
 # ── Client Alert Injection ───────────────────────────────────────────────────

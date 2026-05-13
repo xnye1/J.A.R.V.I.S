@@ -74,6 +74,42 @@ def current_academy_session(dt: datetime | None = None) -> str | None:
     return None
 
 
+_QUIET_START = dtime(0, 0)
+_QUIET_END   = dtime(7, 0)
+
+
+def is_quiet_hours(dt: datetime | None = None) -> bool:
+    """True if KST time is 00:00–07:00: no proactive voice, visual overlay only."""
+    now = dt or datetime.now(_KST)
+    t   = now.time().replace(second=0, microsecond=0)
+    return _QUIET_START <= t < _QUIET_END
+
+
+def current_mute_state(dt: datetime | None = None) -> dict:
+    """Quick snapshot for /mute/status endpoint and stealth_update broadcasts."""
+    academy  = is_academy_hour(dt)
+    quiet    = is_quiet_hours(dt)
+    session  = current_academy_session(dt)
+    muted    = academy or quiet
+    if academy:
+        reason = f"수업 중 — {session}"
+        icon   = "📚"
+    elif quiet:
+        reason = "심야 모드 (00:00–07:00)"
+        icon   = "🌙"
+    else:
+        reason = ""
+        icon   = ""
+    return {
+        "muted":          muted,
+        "academy_hour":   academy,
+        "quiet_hours":    quiet,
+        "session":        session,
+        "reason":         reason,
+        "icon":           icon,
+    }
+
+
 def is_weekend_hyperfocus(dt: datetime | None = None) -> bool:
     """
     True during the weekend high-intensity window:
@@ -161,6 +197,10 @@ def decide_output(
     # ④ Sleep mode
     if focus_mode == FocusMode.SLEEP:
         return RouteDecision(OutputMode.SILENT, "sleep mode")
+
+    # ④b Late-night silence (00:00–07:00 KST) — visual overlay only
+    if is_quiet_hours(dt):
+        return RouteDecision(OutputMode.SILENT, "quiet hours: 00:00–07:00")
 
     # ⑤ DND / Work focus
     if focus_mode in (FocusMode.DND, FocusMode.WORK):

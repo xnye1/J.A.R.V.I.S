@@ -15,7 +15,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from core.anger_engine import anger
+from core.anger_engine  import anger
+from core.empathy_engine import empathy
 from core.stealth import is_academy_hour, is_weekend_hyperfocus
 
 
@@ -27,23 +28,27 @@ ACADEMY_BLOCK_MULTIPLIER = 2   # class hour weight — 수업 중 딴짓은 치�
 WEEKEND_BLOCK_MULTIPLIER = 3   # weekend window weight — 최고 민감도
 
 
-def _block_amount(focus_active: bool) -> tuple[bool, int]:
+def _block_amount(focus_active: bool) -> tuple[bool, float]:
     """
-    Returns (in_session, amount) based on current time and focus state.
-    Highest multiplier wins.
+    Returns (in_session, amount) based on current time, focus state, and user condition.
+
+    Base multiplier (academy/weekend) is scaled by the EmpathyEngine's anger_multiplier
+    so a tired/sleep-deprived user receives a gentler gauge rise.
     """
     academy = is_academy_hour()
     weekend = is_weekend_hyperfocus()
     in_session = focus_active or academy or weekend
 
     if academy:
-        amount = ACADEMY_BLOCK_MULTIPLIER
+        base = ACADEMY_BLOCK_MULTIPLIER
     elif weekend:
-        amount = WEEKEND_BLOCK_MULTIPLIER
+        base = WEEKEND_BLOCK_MULTIPLIER
     else:
-        amount = 1
+        base = 1
 
-    return in_session, amount
+    # Apply empathy scaling — no DB call at runtime; uses cached profile
+    scaled = base * empathy.anger_multiplier
+    return in_session, max(0.1, scaled)   # floor at 0.1 — never 0
 
 
 @dataclass

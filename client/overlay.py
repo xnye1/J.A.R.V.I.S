@@ -56,13 +56,17 @@ class _GhostBridge(QObject):
     toggled = pyqtSignal(bool)              # is_ghost
 
 class _AlertBridge(QObject):
-    flashed = pyqtSignal(str)              # alert message (unused in UI, triggers flash)
+    flashed = pyqtSignal(str)              # alert message — triggers flash
+
+class _MuteBridge(QObject):
+    changed = pyqtSignal(bool, str, str)   # muted, icon, reason
 
 
 _anger_bridge = _AngerBridge()
 _study_bridge = _StudyBridge()
 _ghost_bridge = _GhostBridge()
 _alert_bridge = _AlertBridge()
+_mute_bridge  = _MuteBridge()
 
 
 # ── JarvisHUD composite widget ────────────────────────────────────────────────
@@ -126,13 +130,13 @@ class JarvisHUD(QWidget):
         self._subj_bar.setStyleSheet(self._bar_css(_SUBJECT_COLOR))
         layout.addWidget(self._subj_bar)
 
-        # — D-Day chip —
-        self._dday_label = QLabel("")
-        self._dday_label.setStyleSheet(
+        # — Context chip: D-Day OR mute indicator —
+        self._ctx_label = QLabel("")
+        self._ctx_label.setStyleSheet(
             "color: rgba(255,255,255,120); font-size: 9px; "
             "font-family: monospace; letter-spacing: 1px;"
         )
-        layout.addWidget(self._dday_label)
+        layout.addWidget(self._ctx_label)
 
         # ── Internal state ────────────────────────────────────────────────────
         self._fury_color  = _DEFAULT_COLOR
@@ -154,11 +158,14 @@ class JarvisHUD(QWidget):
         self._alert_timer.setInterval(3000)
         self._alert_timer.timeout.connect(self._end_alert)
 
+        self._muted = False
+
         # ── Wire bridges ──────────────────────────────────────────────────────
         _anger_bridge.updated.connect(self._on_anger)
         _study_bridge.updated.connect(self._on_study)
         _ghost_bridge.toggled.connect(self._set_ghost)
         _alert_bridge.flashed.connect(self._on_alert)
+        _mute_bridge.changed.connect(self._on_mute)
 
     # ── Slot implementations ──────────────────────────────────────────────────
 
@@ -174,7 +181,22 @@ class JarvisHUD(QWidget):
     def _on_study(self, subject: str, pct: float, dday: str) -> None:
         self._subj_bar.setValue(int(pct))
         self._subj_label.setText(f"{subject}  ·  {pct:.0f}%")
-        self._dday_label.setText(dday)
+        if not self._muted:
+            self._ctx_label.setText(dday)
+
+    def _on_mute(self, muted: bool, icon: str, reason: str) -> None:
+        self._muted = muted
+        if muted:
+            self._ctx_label.setStyleSheet(
+                "color: #fbbf24; font-size: 9px; font-family: monospace; letter-spacing: 1px;"
+            )
+            self._ctx_label.setText(f"{icon}  {reason}")
+        else:
+            self._ctx_label.setStyleSheet(
+                "color: rgba(255,255,255,120); font-size: 9px; "
+                "font-family: monospace; letter-spacing: 1px;"
+            )
+            self._ctx_label.setText("")
 
     def _set_ghost(self, ghost: bool) -> None:
         """Activate/deactivate ghost mode — triggers opacity animation."""
@@ -300,6 +322,12 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
                         lon = float(msg.get("lon", 0.0))
                         if lat or lon:
                             predictor.update_location(lat, lon)
+
+                    elif mtype == "stealth_update":
+                        muted  = bool(msg.get("muted", False))
+                        icon   = str(msg.get("icon", ""))
+                        reason = str(msg.get("reason", ""))
+                        _mute_bridge.changed.emit(muted, icon, reason)
 
                     elif mtype == "proactive_alert":
                         _alert_bridge.flashed.emit(str(msg.get("message", "")))

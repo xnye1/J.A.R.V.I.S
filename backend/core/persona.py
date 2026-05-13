@@ -164,6 +164,58 @@ class JarvisPersona:
         except Exception:
             return f"[JARVIS ALERT] {alert_context}"
 
+    def weekly_summary(self, briefing: dict) -> str:
+        """
+        Generate a 3-line weekly digest + next-week action plan from briefing data.
+        Simulation mode: template-filled string.  Full mode: Claude-generated.
+        """
+        eff        = briefing.get("avg_efficiency", 0)
+        sessions   = briefing.get("days_reviewed", 0)
+        distracts  = briefing.get("total_distractions", 0)
+        peak       = briefing.get("fury_peak", "GENTLE")
+        goals      = briefing.get("goals", [])
+        topics     = briefing.get("critical_topics", [])
+        dur_days   = briefing.get("duration_days", 1)
+
+        top_goal   = goals[0]["title"] if goals else "목표 미설정"
+        top_goal_p = goals[0]["progress"] if goals else 0
+        weak_str   = ", ".join(f"{t['subject']} ({t['topic']})" for t in topics[:2]) or "없음"
+
+        sim_summary = (
+            f"WEEKLY DIGEST  ·  최근 {sessions}일 기록\n"
+            f"{'━' * 44}\n"
+            f"• 평균 효율 {eff:.0f}점, 분산 {distracts}회 — "
+            f"분노 피크 {peak} 단계{'  (기숙사 {dur_days:.0f}일 격리)' if dur_days >= 1 else ''}.\n"
+            f"• 주요 목표 『{top_goal}』 진행률 {top_goal_p}%  |  "
+            f"집중 필요 과목: {weak_str}.\n"
+            f"• {'이번 주 흐름은 회복 중입니다.' if eff >= 70 else '집중력이 기대치를 밑돌았습니다. 패턴 점검 필요.'}\n\n"
+            f"다음 주 액션 플랜:\n"
+            f"→ [1] 취약 과목 우선 집중 세션 (Pomodoro 4회 목표)\n"
+            f"→ [2] 외출 전 15분: 주간 목표 달성률 체크 루틴 설정\n"
+            f"→ [3] 분산 알림 발생 즉시 포모도로 재시작 — 허용 분산 하루 최대 3회"
+        )
+
+        if SIMULATION_MODE:
+            return sim_summary
+
+        context = (
+            f"User weekly data: avg_efficiency={eff}%, distractions={distracts}, "
+            f"fury_peak={peak}, goals={goals[:3]}, critical_topics={topics[:3]}, "
+            f"dorm_days={dur_days:.1f}. "
+            f"Write a 3-line bullet summary (Korean) + 3-item next-week action plan. "
+            f"Be precise, data-driven, and end with exactly 3 '→' action items. "
+            f"Prefix with 'WEEKLY DIGEST  ·  최근 {sessions}일 기록' and a separator line."
+        )
+        try:
+            resp = self.client.messages.create(
+                model=self.model, max_tokens=400,
+                system=self._build_system_prompt(),
+                messages=[{"role": "user", "content": context}],
+            )
+            return resp.content[0].text
+        except Exception:
+            return sim_summary
+
     def reset_conversation(self) -> None:
         self._local_history = []
         memory.clear(self.session_id)

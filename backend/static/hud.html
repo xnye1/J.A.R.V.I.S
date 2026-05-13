@@ -398,6 +398,33 @@ body::after {
   to   { opacity:1; transform:translateX(-50%) translateY(0); }
 }
 
+/* ── Ghost Mode banner ── */
+#ghost-banner {
+  position:fixed; top:0; left:0; right:0; z-index:997;
+  padding:7px 20px;
+  background:rgba(2,4,14,0.92);
+  border-bottom:1px solid rgba(0,242,255,.14);
+  backdrop-filter:blur(8px);
+  display:none; align-items:center; justify-content:center; gap:14px;
+  font-family:'Orbitron',sans-serif; font-size:8px; letter-spacing:2.5px;
+  color:rgba(0,242,255,0.42); pointer-events:none;
+  transition:opacity .5s;
+}
+#ghost-banner.active { display:flex; animation:ghost-slide .4s ease-out; }
+#ghost-icon-el { font-size:13px; opacity:.7; }
+#ghost-reason-el { color:rgba(0,242,255,0.62); letter-spacing:3px; }
+#ghost-pulse {
+  width:6px; height:6px; border-radius:50%;
+  background:rgba(0,242,255,.45);
+  animation:ghost-blink 2.8s ease-in-out infinite;
+}
+@keyframes ghost-slide { from{opacity:0;transform:translateY(-100%)} to{opacity:1;transform:none} }
+@keyframes ghost-blink { 0%,100%{opacity:.2} 50%{opacity:.8} }
+
+/* ── Empathy chip ── */
+.empathy-label { font-size:8px; letter-spacing:1.5px; color:var(--c); margin-top:1px; transition:color .4s; }
+#b-empathy { font-family:'Orbitron',sans-serif; font-size:12px !important; }
+
 /* ── Data Cascade canvases ── */
 #cascade-l, #cascade-r {
   position:absolute; inset:0; z-index:0; pointer-events:none; transition:opacity .4s;
@@ -481,6 +508,12 @@ body.static-mode #orb {
 <body>
 <div id="flash"></div>
 <div id="deploy-banner"></div>
+<div id="ghost-banner">
+  <div id="ghost-pulse"></div>
+  <span id="ghost-icon-el">👻</span>
+  <span id="ghost-reason-el">GHOST MODE ACTIVE</span>
+  <span style="color:rgba(0,242,255,.25);font-family:'Share Tech Mono',monospace;font-size:8px" id="ghost-time-el"></span>
+</div>
 <div id="app">
 
 <!-- TOP BAR -->
@@ -582,6 +615,15 @@ body.static-mode #orb {
     <div style="margin-top:8px;">
       <button id="sig-btn" onclick="sendTestSignal()">&#9889; TRANSMIT TEST SIGNAL</button>
     </div>
+    <div style="margin-top:6px;">
+      <button id="summary-btn" onclick="requestWeeklySummary()"
+        style="width:100%;padding:8px;border-radius:10px;cursor:pointer;
+               background:rgba(56,189,248,.07);border:1px solid rgba(56,189,248,.3);
+               color:#38bdf8;font-family:'Orbitron',sans-serif;font-size:8px;letter-spacing:2px;
+               transition:background .15s,box-shadow .15s;">
+        &#9672; WEEKLY DIGEST
+      </button>
+    </div>
   </div>
 
 </div>
@@ -641,6 +683,11 @@ body.static-mode #orb {
     <strong id="b-integrity">100%</strong>
     <div class="integrity-bar-track"><div id="integrity-fill"></div></div>
   </div>
+  <div class="bchip" id="empathy-chip">
+    CONDITION
+    <strong id="b-empathy">--</strong>
+    <div class="empathy-label" id="empathy-label">NOMINAL</div>
+  </div>
   <div class="bchip fury-chip" id="fury-chip">
     FURY GAUGE
     <strong id="b-fury">0%</strong>
@@ -656,6 +703,7 @@ body.static-mode #orb {
 const WS = `ws://${location.host}/ws`;
 let ws, pingAt, latMs = 0, msgCnt = 0, startMs = Date.now(), orbTimer;
 let prevFuryStage = 'GENTLE';
+let _ghostActive = false;
 
 /* ── Clock + Uptime ── */
 function tick() {
@@ -880,6 +928,37 @@ function setRemote(count, bat) {
 function sendTestSignal() {
   if (ws?.readyState !== 1) return;
   ws.send(JSON.stringify({type:'test_signal'}));
+}
+
+/* ── Ghost Mode ── */
+function setGhostMode(muted, reason, icon) {
+  const banner = document.getElementById('ghost-banner');
+  if (!banner) return;
+  if (muted && !_ghostActive) {
+    _ghostActive = true;
+    const iconEl   = document.getElementById('ghost-icon-el');
+    const reasonEl = document.getElementById('ghost-reason-el');
+    const timeEl   = document.getElementById('ghost-time-el');
+    if (iconEl)   iconEl.textContent   = icon   || '👻';
+    if (reasonEl) reasonEl.textContent = (reason || 'GHOST MODE').toUpperCase();
+    if (timeEl)   timeEl.textContent   = new Date().toTimeString().slice(0,8);
+    banner.classList.remove('active');
+    void banner.offsetWidth;
+    banner.classList.add('active');
+  } else if (!muted && _ghostActive) {
+    _ghostActive = false;
+    banner.classList.remove('active');
+  }
+}
+
+/* ── One-Tap Weekly Digest ── */
+async function requestWeeklySummary() {
+  const btn = document.getElementById('summary-btn');
+  if (btn) { btn.textContent = '◈ GENERATING…'; btn.disabled = true; }
+  try { await fetch('/dorm/summary', {method:'POST'}); } catch(_) {}
+  setTimeout(() => {
+    if (btn) { btn.textContent = '◉ WEEKLY DIGEST'; btn.disabled = false; }
+  }, 5000);
 }
 
 /* ── WebSocket ── */
@@ -1122,6 +1201,27 @@ reg('fury_tick', m => {
   });
 });
 
+reg('stealth_update', m => {
+  const wasGhost = _ghostActive;
+  setGhostMode(!!m.muted, m.reason || '', m.icon || '');
+  if (m.muted && !wasGhost)      addEvt(`Ghost Mode: ${m.reason || 'silent'}`, 'al');
+  else if (!m.muted && wasGhost) addEvt('Ghost Mode cleared — JARVIS active', 'hi');
+});
+
+reg('empathy_update', m => {
+  const score = m.condition_score || 60;
+  const label = (m.label || 'Nominal').toUpperCase();
+  const color = score >= 80 ? 'var(--c)'
+              : score >= 60 ? 'var(--grn)'
+              : score >= 40 ? 'var(--ylw)'
+              : 'var(--red)';
+  const el  = document.getElementById('b-empathy');
+  const lbl = document.getElementById('empathy-label');
+  if (el)  { el.textContent = Math.round(score) + '%'; el.style.color = color; }
+  if (lbl) { lbl.textContent = label; lbl.style.color = color; }
+  if (m.message) addEvt(`Empathy: ${m.message.slice(0,50)}`, '');
+});
+
 reg('location_update', m => {
   const zone = (m.zone || 'unknown').toUpperCase();
   const mode = m.output_mode || m.mode || '--';
@@ -1164,16 +1264,58 @@ reg('dorm_exit_briefing', m => {
   const hrs  = m.duration_hrs  || 0;
   const days = m.duration_days || 0;
   const peak = m.fury_peak     || 'GENTLE';
-  addMsg('JARVIS', `귀환 확인, Sir. ${days}일(${hrs}h) 기숙사 격리 해제. 퓨리 피크: ${peak}. 활성 목표 ${m.active_goals||0}개. 브리핑 준비됨.`, 'j');
+
+  // Show the AI-generated or template weekly summary
+  if (m.summary) {
+    // Build a styled digest panel
+    const panel = document.createElement('div');
+    panel.style.cssText = [
+      'position:fixed','top:50%','left:50%',
+      'transform:translate(-50%,-50%)',
+      'background:rgba(0,0,0,0.92)',
+      'border:1px solid #38bdf8',
+      'border-radius:12px','padding:22px 28px',
+      'max-width:520px','width:90%',
+      'font-family:"Share Tech Mono",monospace',
+      'font-size:12px','color:#e2e8f0',
+      'white-space:pre-wrap','line-height:1.7',
+      'z-index:9999','box-shadow:0 0 32px rgba(56,189,248,0.3)',
+    ].join(';');
+    panel.innerHTML =
+      `<div style="color:#38bdf8;font-size:14px;margin-bottom:12px;letter-spacing:2px">◈ WEEKLY DIGEST</div>` +
+      `<div>${escHtml(m.summary)}</div>` +
+      `<button onclick="this.parentElement.remove()" style="margin-top:16px;padding:6px 18px;` +
+      `background:#1e293b;border:1px solid #38bdf8;border-radius:6px;color:#38bdf8;` +
+      `cursor:pointer;font-family:inherit;font-size:11px;letter-spacing:1px">DISMISS</button>`;
+    document.body.appendChild(panel);
+    // Auto-dismiss after 30 s
+    setTimeout(() => panel.remove(), 30000);
+  }
+
+  addMsg('JARVIS', `귀환 확인, Sir. ${days}일(${hrs}h) 격리 해제. 퓨리 피크: ${peak}. 목표 ${m.active_goals||0}개. 주간 요약 표시 중.`, 'j');
   if (m.critical_topics && m.critical_topics.length) {
     const topics = m.critical_topics.map(t => `${t.subject}:${t.topic}`).join(' / ');
-    addMsg('STUDY ALERT', `취약 단원: ${topics}`, 'a');
+    addMsg('STUDY ALERT', `취약 단원 집중 필요: ${topics}`, 'a');
   }
   if (m.goals) {
     m.goals.forEach(g => addEvt(`목표: ${g.title} — ${g.progress}%`, g.progress >= 50 ? 'hi' : 'al'));
   }
-  addEvt(`복귀 보고: ${days}일 격리 / 방해 ${m.total_distractions||0}건 / 효율 ${m.avg_efficiency||100}%`, 'hi');
-  flash(); orbReact('DEBRIEF', 5000);
+  addEvt(`주간 요약 — 격리 ${days}일 / 방해 ${m.total_distractions||0}건 / 효율 ${m.avg_efficiency||100}%`, 'hi');
+  flash(); flash(); orbReact('WEEKLY DEBRIEF', 7000);
+});
+
+reg('stealth_update', m => {
+  const icon   = m.icon   || '🔇';
+  const reason = m.reason || '';
+  const chip   = document.getElementById('svc-bar');
+  // Add a temporary mute badge to event log
+  addEvt(`${icon} MUTED — ${reason}`, 'al');
+  // If there's a fury chip element, briefly show mute state
+  const furyChip = document.querySelector('.fury-chip');
+  if (furyChip && m.muted) {
+    furyChip.style.borderColor = '#fbbf24';
+    setTimeout(() => { furyChip.style.borderColor = ''; }, 5000);
+  }
 });
 
 reg('app_open_alert', m => {

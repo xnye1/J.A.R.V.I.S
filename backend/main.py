@@ -24,13 +24,14 @@ _KEY        = os.getenv("ANTHROPIC_API_KEY", "")
 _SIMULATION = not _KEY or not _KEY.startswith("sk-ant-")
 print(f"[JARVIS] {'Simulation' if _SIMULATION else 'Full'} mode.")
 
-from core.anger_engine  import anger
-from core.dispatcher    import dispatcher, Priority
+from core.anger_engine   import anger
+from core.dispatcher     import dispatcher, Priority
+from core.empathy_engine import empathy
 from core.dorm_tracker  import dorm_tracker
 from core.fury_tracker  import fury
 from core.persona       import JarvisPersona
 from core.state         import state
-from core.stealth       import classify_location, decide_output, FocusMode
+from core.stealth       import classify_location, current_mute_state, decide_output, FocusMode, OutputMode
 from core.system_info   import get_detailed_status
 from core.voice_bridge  import handle_arrival, speak
 from services           import ServiceRegistry
@@ -88,6 +89,12 @@ registry = ServiceRegistry(dispatcher, state)
 
 
 async def _on_alert(alert_text: str, _status) -> None:
+    route = decide_output()
+    if route.mode in (OutputMode.SILENT, OutputMode.STANDBY):
+        # Muted: visual ghost overlay still active, no voice/text interruption
+        _mute_log = f"[Mute] Proactive alert suppressed ({route.reason}): {alert_text[:60]}"
+        print(_mute_log)
+        return
     reply = jarvis.proactive_alert(alert_text)
     await dispatcher.emit({"type": "proactive_alert", "message": reply}, Priority.HIGH)
     await dispatcher.emit({"type": "orb_react", "intensity": 0.9, "duration": 3000}, Priority.HIGH)
@@ -108,6 +115,9 @@ async def _status_broadcaster() -> None:
         last_at = now
         s  = get_detailed_status()
         pa = get_current_status()
+        mute = current_mute_state()
+        await dispatcher.emit({"type": "stealth_update", **mute}, Priority.LOW)
+
         await dispatcher.emit({
             "type": "status",
             "data": {
@@ -144,6 +154,9 @@ async def _mock_service_broadcaster() -> None:
         snap = anger.snapshot()
         priority = Priority.HIGH if snap["gauge"] >= 80 else Priority.LOW
         await dispatcher.emit({"type": "anger_update", **snap}, priority)
+
+        emp = empathy.snapshot()
+        await dispatcher.emit({"type": "empathy_update", **emp}, Priority.LOW)
 
 
 async def _fury_ticker() -> None:
