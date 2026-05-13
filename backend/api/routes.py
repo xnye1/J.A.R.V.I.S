@@ -569,3 +569,24 @@ async def weather():
     if svc is None:
         raise HTTPException(status_code=503, detail="SchoolService not available.")
     return await svc.get_weather()
+
+
+# ── Debug / Test ──────────────────────────────────────────────────────────────
+
+@router.post("/debug/ghost")
+async def debug_ghost(muted: bool = True, reason: str = "테스트 수업 중", icon: str = "📚"):
+    """
+    Dev-only: inject a stealth_update event to verify Ghost Mode on the HUD.
+    muted=true → banner appears.  muted=false → banner clears.
+    """
+    payload = {
+        "type":         "stealth_update",
+        "muted":        muted,
+        "academy_hour": muted,
+        "quiet_hours":  False,
+        "session":      "debug_test" if muted else None,
+        "reason":       reason if muted else "",
+        "icon":         icon if muted else "",
+    }
+    await dispatcher.emit(payload, Priority.NORMAL)
+    return {"injected": payload}
