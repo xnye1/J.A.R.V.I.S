@@ -59,6 +59,19 @@ _STAGE_COLORS: dict[str, str] = {
 _last_shop: list[dict[str, Any]] = []
 
 
+def _emit(sig_fn, *args) -> None:
+    """Safely call signal.emit() from any thread.
+
+    Silently swallows RuntimeError, which occurs when the QObject backing
+    _bridge has been destroyed (app shutting down) while the WS thread
+    or async tasks are still running.
+    """
+    try:
+        sig_fn(*args)
+    except RuntimeError:
+        pass
+
+
 # ── QWebChannel Data Bridge ────────────────────────────────────────────────────
 
 class JarvisDataBridge(QObject):
@@ -209,8 +222,8 @@ class WebHUD:
 # ── Async search helpers ───────────────────────────────────────────────────────
 
 async def _do_web_search(query: str, agent: Any, prefs: Any) -> None:
-    _bridge.agentFetching.emit(True)
-    _bridge.logLine.emit(f"SEARCH  '{query[:35]}'…", False)
+    _emit(_bridge.agentFetching.emit, True)
+    _emit(_bridge.logLine.emit, f"SEARCH  '{query[:35]}'…", False)
     try:
         results     = await agent.search(query)
         focus_score = _sys_state.get("focus", 50.0)
@@ -223,19 +236,19 @@ async def _do_web_search(query: str, agent: Any, prefs: Any) -> None:
              "rank":    i}
             for i, r in enumerate(ranked)
         ]
-        _bridge.searchReady.emit(payload)
-        _bridge.speakStarted.emit(
-            f"{intro}검색 완료 — {len(ranked)}개 결과", "normal", 2200)
-        _bridge.logLine.emit(f"SEARCH  done  {len(ranked)} results", True)
+        _emit(_bridge.searchReady.emit, payload)
+        _emit(_bridge.speakStarted.emit,
+              f"{intro}검색 완료 — {len(ranked)}개 결과", "normal", 2200)
+        _emit(_bridge.logLine.emit, f"SEARCH  done  {len(ranked)} results", True)
     except Exception as exc:
         log.error("[Agent] web search failed: %s", exc)
     finally:
-        _bridge.agentFetching.emit(False)
+        _emit(_bridge.agentFetching.emit, False)
 
 
 async def _do_shop_search(keyword: str, agent: Any, prefs: Any) -> None:
-    _bridge.agentFetching.emit(True)
-    _bridge.logLine.emit(f"SHOP  '{keyword[:35]}'…", False)
+    _emit(_bridge.agentFetching.emit, True)
+    _emit(_bridge.logLine.emit, f"SHOP  '{keyword[:35]}'…", False)
     try:
         results     = await agent.shop(keyword)
         focus_score = _sys_state.get("focus", 50.0)
@@ -249,17 +262,17 @@ async def _do_shop_search(keyword: str, agent: Any, prefs: Any) -> None:
              "rank":          i}
             for i, r in enumerate(ranked)
         ]
-        _bridge.shopReady.emit(payload)
+        _emit(_bridge.shopReady.emit, payload)
         if ranked:
-            top      = ranked[0]
-            price_s  = top.price_str() if hasattr(top, "price_str") else ""
-            _bridge.speakStarted.emit(
-                f"최저가 {price_s} — 박수로 장바구니 담기", "normal", 3000)
-        _bridge.logLine.emit(f"SHOP  done  {len(ranked)} items", True)
+            top     = ranked[0]
+            price_s = top.price_str() if hasattr(top, "price_str") else ""
+            _emit(_bridge.speakStarted.emit,
+                  f"최저가 {price_s} — 박수로 장바구니 담기", "normal", 3000)
+        _emit(_bridge.logLine.emit, f"SHOP  done  {len(ranked)} items", True)
     except Exception as exc:
         log.error("[Agent] shop search failed: %s", exc)
     finally:
-        _bridge.agentFetching.emit(False)
+        _emit(_bridge.agentFetching.emit, False)
 
 
 # ── WebSocket receive loop ─────────────────────────────────────────────────────
@@ -273,7 +286,7 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
     import websockets  # type: ignore[import-untyped]
 
     focus_engine = FocusScoreEngine(
-        on_ghost_mode=_bridge.ghostToggled.emit,
+        on_ghost_mode=lambda v: _emit(_bridge.ghostToggled.emit, v),
         http_base=http_base,
     )
     predictor = PredictiveAlert(http_base=http_base)
@@ -285,8 +298,8 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
 
     heartbeat = HeartbeatMonitor(
         http_base   = http_base,
-        on_lost     = _bridge.heartbeatLost.emit,
-        on_restored = _bridge.heartbeatOk.emit,
+        on_lost     = lambda: _emit(_bridge.heartbeatLost.emit),
+        on_restored = lambda: _emit(_bridge.heartbeatOk.emit),
     )
     asyncio.create_task(heartbeat.run())
 
@@ -296,7 +309,7 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
             async with websockets.connect(ws_url, ping_interval=20) as ws:
                 log.info("[Overlay] WS connected → %s", ws_url)
                 await ws.send(json.dumps({"type": "register", "device": "overlay"}))
-                _bridge.logLine.emit(f"WS connected  {ws_url}", True)
+                _emit(_bridge.logLine.emit, f"WS connected  {ws_url}", True)
                 backoff = 2.0
 
                 async for raw in ws:
@@ -307,101 +320,114 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
 
                     mtype = msg.get("type", "")
 
-                    if mtype == "anger_update":
-                        gauge = float(msg.get("gauge", 0.0))
-                        stage = str(msg.get("stage", "GENTLE"))
-                        color = str(msg.get("hud_color",
-                                            _STAGE_COLORS.get(stage, "#39FF14")))
-                        _bridge.angerUpdated.emit(gauge, stage, color)
-                        focus_engine.record_gauge(gauge)
-                        score = focus_engine.current_score
-                        _sys_state["focus"] = score
-                        _bridge.focusScored.emit(score)
+                    # All emit() calls here run on the asyncio thread and are
+                    # dispatched to the Qt main thread via QueuedConnection.
+                    # RuntimeError means the bridge QObject was destroyed
+                    # (app shutting down) — silently drop the message.
+                    try:
+                        if mtype == "anger_update":
+                            gauge = float(msg.get("gauge", 0.0))
+                            stage = str(msg.get("stage", "GENTLE"))
+                            color = str(msg.get("hud_color",
+                                                _STAGE_COLORS.get(stage, "#39FF14")))
+                            _emit(_bridge.angerUpdated.emit, gauge, stage, color)
+                            focus_engine.record_gauge(gauge)
+                            score = focus_engine.current_score
+                            _sys_state["focus"] = score
+                            _emit(_bridge.focusScored.emit, score)
 
-                    elif mtype == "study_update":
-                        data    = msg.get("data", {})
-                        subject = str(data.get("subject", ""))
-                        pct     = float(data.get("progress", 0.0))
-                        if subject:
-                            _bridge.logLine.emit(
-                                f"STUDY  {subject}  {pct:.0f}%", False)
+                        elif mtype == "study_update":
+                            data    = msg.get("data", {})
+                            subject = str(data.get("subject", ""))
+                            pct     = float(data.get("progress", 0.0))
+                            if subject:
+                                _emit(_bridge.logLine.emit,
+                                      f"STUDY  {subject}  {pct:.0f}%", False)
 
-                    elif mtype == "status":
-                        cpu  = float(msg.get("cpu_percent",  0.0))
-                        mem  = float(msg.get("mem_percent",  0.0))
-                        disk = float(msg.get("disk_percent", 0.0))
-                        _sys_state.update(cpu=cpu, mem=mem, disk=disk)
-                        _bridge.sysUpdated.emit(cpu, mem, disk)
+                        elif mtype == "status":
+                            cpu  = float(msg.get("cpu_percent",  0.0))
+                            mem  = float(msg.get("mem_percent",  0.0))
+                            disk = float(msg.get("disk_percent", 0.0))
+                            _sys_state.update(cpu=cpu, mem=mem, disk=disk)
+                            _emit(_bridge.sysUpdated.emit, cpu, mem, disk)
 
-                    elif mtype == "calendar_data":
-                        predictor.update_events(msg.get("events", []))
+                        elif mtype == "calendar_data":
+                            predictor.update_events(msg.get("events", []))
 
-                    elif mtype == "location_update":
-                        lat = float(msg.get("lat", 0.0))
-                        lon = float(msg.get("lon", 0.0))
-                        if lat or lon:
-                            predictor.update_location(lat, lon)
+                        elif mtype == "location_update":
+                            lat = float(msg.get("lat", 0.0))
+                            lon = float(msg.get("lon", 0.0))
+                            if lat or lon:
+                                predictor.update_location(lat, lon)
 
-                    elif mtype == "stealth_update":
-                        muted  = bool(msg.get("muted", False))
-                        reason = str(msg.get("reason", ""))
-                        _bridge.logLine.emit(
-                            f"STEALTH  {'ON' if muted else 'OFF'}  {reason}", False)
+                        elif mtype == "stealth_update":
+                            muted  = bool(msg.get("muted", False))
+                            reason = str(msg.get("reason", ""))
+                            _emit(_bridge.logLine.emit,
+                                  f"STEALTH  {'ON' if muted else 'OFF'}  {reason}",
+                                  False)
 
-                    elif mtype == "chat_response":
-                        text = str(msg.get("message", msg.get("response", "")))
-                        if text:
-                            duration = max(2200, len(text) * 55)
-                            _bridge.speakStarted.emit(text, "normal", duration)
+                        elif mtype == "chat_response":
+                            text = str(msg.get("message", msg.get("response", "")))
+                            if text:
+                                duration = max(2200, len(text) * 55)
+                                _emit(_bridge.speakStarted.emit,
+                                      text, "normal", duration)
 
-                    elif mtype == "proactive_alert":
-                        text     = str(msg.get("message", ""))
-                        severity = str(msg.get("severity", "NORMAL")).upper()
-                        imp      = (
-                            "critical" if severity == "CRITICAL"
-                            else "warning" if severity in ("HIGH", "WARNING")
-                            else "normal"
-                        )
-                        duration = max(3000, len(text) * 60)
-                        _bridge.speakStarted.emit(text, imp, duration)
-                        _bridge.alertFlashed.emit(text)
-                        _bridge.logLine.emit(f"ALERT  {text[:60]}", True)
-
-                    elif mtype == "search_request":
-                        query = str(msg.get("query", "")).strip()
-                        if query:
-                            asyncio.create_task(
-                                _do_web_search(query, search_agent, prefs))
-
-                    elif mtype == "shop_request":
-                        keyword = str(
-                            msg.get("keyword", msg.get("query", ""))).strip()
-                        if keyword:
-                            asyncio.create_task(
-                                _do_shop_search(keyword, search_agent, prefs))
-
-                    elif mtype == "feedback":
-                        try:
-                            prefs.record_feedback(
-                                query         = str(msg.get("query",        "")),
-                                result_title  = str(msg.get("result_title", "")),
-                                result_domain = str(msg.get("domain",       "")),
-                                positive      = bool(msg.get("positive",    True)),
+                        elif mtype == "proactive_alert":
+                            text     = str(msg.get("message", ""))
+                            severity = str(msg.get("severity", "NORMAL")).upper()
+                            imp      = (
+                                "critical" if severity == "CRITICAL"
+                                else "warning" if severity in ("HIGH", "WARNING")
+                                else "normal"
                             )
-                        except Exception as fb_exc:
-                            log.debug("[Agent] feedback: %s", fb_exc)
+                            duration = max(3000, len(text) * 60)
+                            _emit(_bridge.speakStarted.emit, text, imp, duration)
+                            _emit(_bridge.alertFlashed.emit, text)
+                            _emit(_bridge.logLine.emit, f"ALERT  {text[:60]}", True)
 
-                    elif mtype == "deploy_failed":
-                        _bridge.logLine.emit("DEPLOY FAILED ⚠", True)
-                        _bridge.errorFlash.emit("ERROR", "Deploy pipeline failed")
+                        elif mtype == "search_request":
+                            query = str(msg.get("query", "")).strip()
+                            if query:
+                                asyncio.create_task(
+                                    _do_web_search(query, search_agent, prefs))
 
-                    elif mtype == "system_update":
-                        _bridge.logLine.emit("DEPLOY  push complete ✓", True)
+                        elif mtype == "shop_request":
+                            keyword = str(
+                                msg.get("keyword", msg.get("query", ""))).strip()
+                            if keyword:
+                                asyncio.create_task(
+                                    _do_shop_search(keyword, search_agent, prefs))
+
+                        elif mtype == "feedback":
+                            try:
+                                prefs.record_feedback(
+                                    query         = str(msg.get("query",        "")),
+                                    result_title  = str(msg.get("result_title", "")),
+                                    result_domain = str(msg.get("domain",       "")),
+                                    positive      = bool(msg.get("positive",    True)),
+                                )
+                            except Exception as fb_exc:
+                                log.debug("[Agent] feedback: %s", fb_exc)
+
+                        elif mtype == "deploy_failed":
+                            _emit(_bridge.logLine.emit, "DEPLOY FAILED ⚠", True)
+                            _emit(_bridge.errorFlash.emit,
+                                  "ERROR", "Deploy pipeline failed")
+
+                        elif mtype == "system_update":
+                            _emit(_bridge.logLine.emit,
+                                  "DEPLOY  push complete ✓", True)
+
+                    except RuntimeError:
+                        log.debug(
+                            "[Overlay] Bridge destroyed — dropped msg type=%r", mtype)
 
         except Exception as exc:
             log.warning(
                 "[Overlay] WS error: %s — retry in %.0fs", exc, backoff)
-            _bridge.logLine.emit(f"WS reconnect in {backoff:.0f}s", False)
+            _emit(_bridge.logLine.emit, f"WS reconnect in {backoff:.0f}s", False)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60.0)
 
