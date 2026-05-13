@@ -36,6 +36,7 @@ import asyncio
 import json
 import logging
 import pathlib
+import signal as _signal
 import threading
 import webbrowser
 from typing import Any
@@ -183,11 +184,15 @@ class WebHUD:
         )
 
         # Construct QWebEnginePage DIRECTLY instead of calling view.page().
-        # On Python 3.14 + PyQt6-WebEngine, view.page() triggers an internal
-        # SIP type lookup that goes through CPython's EnumType.__call__ and
-        # can deadlock or raise before the page object is returned.
-        # Creating QWebEnginePage(view) explicitly bypasses this path entirely.
-        self._page = QWebEnginePage(self._view)
+        # On Python 3.14 + PyQt6-WebEngine, Chromium's renderer subprocess spawn
+        # triggers a Windows console-ctrl event that Python 3.14 converts to
+        # KeyboardInterrupt.  Temporarily suppressing SIGINT during construction
+        # prevents the interrupt from propagating into Python.
+        _old_sigint = _signal.signal(_signal.SIGINT, _signal.SIG_IGN)
+        try:
+            self._page = QWebEnginePage(self._view)
+        finally:
+            _signal.signal(_signal.SIGINT, _old_sigint)
 
         s = self._page.settings()
         s.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
@@ -534,8 +539,14 @@ class JarvisOverlay:
         # Defer WebHUD creation to after the event loop starts.
         # QWebEngineView spawns the Chromium renderer process, which needs
         # the Qt event loop running to complete its IPC handshake on Windows.
+        # Python 3.14 converts the Chromium subprocess-spawn signal to
+        # KeyboardInterrupt — suppress SIGINT for the entire WebHUD init block.
         def _init_hud() -> None:
-            hud = WebHUD(audio_response=audio)
+            _sig = _signal.signal(_signal.SIGINT, _signal.SIG_IGN)
+            try:
+                hud = WebHUD(audio_response=audio)
+            finally:
+                _signal.signal(_signal.SIGINT, _sig)
             log.info("[Overlay] Awakening sequence start.")
             hud.awaken()
 
