@@ -21,13 +21,14 @@ from __future__ import annotations
 import os
 
 # ── GPU / driver flags — MUST be set before any Qt module is imported ──────────
-# Fixes "Failed to create GLES3 context" on laptops with incompatible GPU drivers
-# by forcing Chromium to use software rasterization instead of GPU acceleration.
+# Fixes "Failed to create GLES3 context": forces Chromium to use software
+# rasterization instead of GPU acceleration (common on laptops/VMs).
+# Note: QSG_RHI_BACKEND is Qt-Quick-only and NOT set here — QWebEngineView
+# uses Chromium's own render pipeline, independent of Qt's scene graph.
 os.environ.setdefault(
     "QTWEBENGINE_CHROMIUM_FLAGS",
     "--disable-gpu --disable-dev-shm-usage --no-sandbox",
 )
-os.environ.setdefault("QSG_RHI_BACKEND",            "software")
 os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -43,7 +44,7 @@ try:
     from PyQt6.QtCore import QObject, QTimer, QUrl, Qt, pyqtSignal, pyqtSlot
     from PyQt6.QtWidgets import QApplication
     from PyQt6.QtWebEngineWidgets import QWebEngineView
-    from PyQt6.QtWebEngineCore import QWebEngineSettings
+    from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
     from PyQt6.QtWebChannel import QWebChannel
     from PyQt6 import sip as _sip
     _HAS_ENGINE = True
@@ -171,17 +172,23 @@ class WebHUD:
             | Qt.WindowType.WindowStaysOnTopHint
         )
 
-        # Allow file:// origin to load Google Fonts CDN
-        page = self._view.page()
-        s    = page.settings()
+        # Construct QWebEnginePage DIRECTLY instead of calling view.page().
+        # On Python 3.14 + PyQt6-WebEngine, view.page() triggers an internal
+        # SIP type lookup that goes through CPython's EnumType.__call__ and
+        # can deadlock or raise before the page object is returned.
+        # Creating QWebEnginePage(view) explicitly bypasses this path entirely.
+        self._page = QWebEnginePage(self._view)
+
+        s = self._page.settings()
         s.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         s.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         s.setAttribute(QWebEngineSettings.WebAttribute.ScrollAnimatorEnabled, False)
 
-        # QWebChannel
-        self._channel = QWebChannel(page)
+        # Wire QWebChannel to the explicit page, then install it into the view
+        self._channel = QWebChannel(self._page)
         self._channel.registerObject("jarvis", _bridge)
-        page.setWebChannel(self._channel)
+        self._page.setWebChannel(self._channel)
+        self._view.setPage(self._page)
 
         # Load HUD HTML
         if not _HUD_PATH.exists():
