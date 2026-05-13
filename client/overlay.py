@@ -129,6 +129,11 @@ class _FlickerBridge(QObject):
     # True = start power-surge flicker, False = stop
     flickering = pyqtSignal(bool)
 
+class _WakeBridge(QObject):
+    # Emitted from hotword daemon thread; Qt delivers to main thread via QueuedConnection
+    # Payload: WakeEvent.value string ("hotword" or "clap")
+    triggered = pyqtSignal(str)
+
 
 _anger_bridge   = _AngerBridge()
 _study_bridge = _StudyBridge()
@@ -140,6 +145,7 @@ _sys_bridge     = _SysBridge()
 _log_bridge     = _LogBridge()
 _speak_bridge   = _SpeakBridge()
 _flicker_bridge = _FlickerBridge()
+_wake_bridge    = _WakeBridge()
 
 _sys_state: dict = {"cpu": 0.0, "mem": 0.0, "disk": 0.0, "focus": 50.0}
 
@@ -1192,8 +1198,9 @@ class JarvisFullHUD(QWidget):
     Drop shadows: QGraphicsDropShadowEffect on every panel.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, audio_response=None) -> None:
         super().__init__(None)
+        self._audio = audio_response   # AudioResponse | None
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -1263,6 +1270,7 @@ class JarvisFullHUD(QWidget):
         _ghost_bridge.toggled.connect(self._set_ghost)
         _speak_bridge.started.connect(self._on_speaking_started)
         _speak_bridge.finished.connect(self._on_speaking_done)
+        _wake_bridge.triggered.connect(self._on_wake_trigger)
 
     # ── hud_opacity Qt property ───────────────────────────────────────────────
 
@@ -1379,6 +1387,45 @@ class JarvisFullHUD(QWidget):
         self._glitch_active = False
         self._glitch_timer.stop()
         self.update()
+
+    # ── Wake trigger (hotword / clap) ─────────────────────────────────────────
+
+    def _on_wake_trigger(self, event_name: str) -> None:
+        """Slot — called on Qt main thread via _WakeBridge QueuedConnection."""
+        self.re_awaken(event_name)
+
+    def re_awaken(self, event_name: str = "hotword") -> None:
+        """
+        Instant wake response sequence:
+          1. Play audio immediately (before display wakes, <5 ms)
+          2. Wake X11 DPMS display
+          3. Restore full opacity if ghost-dimmed
+          4. Power-surge flicker + reactor critical pulse
+          5. Log the wake event + short glitch flash
+        """
+        from client.hotword import os_wake_display
+
+        # 1. Audio — must fire before anything else (pyqtSignal already on main thread)
+        if self._audio is not None:
+            self._audio.play()
+
+        # 2. Display
+        os_wake_display()
+
+        # 3. Restore opacity
+        self._set_ghost(False)
+
+        # 4. Visual acknowledgment
+        label = "자비스" if event_name == "hotword" else "박수"
+        _log_bridge.line.emit(f"WAKE  [{label}]  JARVIS activated", True)
+        _speak_bridge.started.emit("Yes, Sir.", "critical", 1800)
+        _flicker_bridge.flickering.emit(True)
+        QTimer.singleShot(1800, lambda: _flicker_bridge.flickering.emit(False))
+
+        # 5. 220 ms glitch flash (same as boot-complete)
+        self._glitch_active = True
+        self._glitch_timer.start()
+        QTimer.singleShot(220, self._end_glitch)
 
     # ── paintEvent ───────────────────────────────────────────────────────────
 
@@ -1568,7 +1615,15 @@ class JarvisOverlay:
         import sys
         app = QApplication.instance() or QApplication(sys.argv)
 
-        hud = JarvisFullHUD()
+        # ── Audio: preload before HUD so play() is instant on first wake ─────
+        from client.audio_response import AudioResponse
+        audio = AudioResponse()
+        audio.preload()
+
+        # ── HUD ───────────────────────────────────────────────────────────────
+        hud = JarvisFullHUD(audio_response=audio)
+
+        # ── WebSocket receiver ────────────────────────────────────────────────
         ws_thread = threading.Thread(
             target=_run_ws_thread,
             args=(self._ws_url, self._http_base),
@@ -1576,6 +1631,14 @@ class JarvisOverlay:
             name="jarvis-ws-overlay",
         )
         ws_thread.start()
+
+        # ── Hotword engine (daemon thread, starts after QApplication) ─────────
+        from client.hotword import HotwordEngine, WakeEvent
+        hotword = HotwordEngine(
+            on_wake=lambda evt: _wake_bridge.triggered.emit(evt.value),
+            power_save=False,
+        )
+        hotword.start()
 
         log.info("[Overlay] Awakening sequence start.")
         hud.awaken()

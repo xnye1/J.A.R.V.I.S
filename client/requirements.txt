@@ -9,3 +9,16 @@ websockets>=12.0        # already in root requirements — kept here for clarity
 
 # ── Network (DormSyncManager — lazy-imported, not loaded until first flush) ──
 aiohttp>=3.9.0
+
+# ── Hotword & clap detection ─────────────────────────────────────────────────
+PyAudio>=0.2.13         # microphone capture via PortAudio
+webrtcvad>=2.0.10       # VAD gating — skips silent frames, saves CPU
+numpy>=1.24.0           # RMS computation + OWW frame buffering
+
+# ── Audio response ───────────────────────────────────────────────────────────
+simpleaudio>=1.0.4      # zero-latency pre-loaded WAV playback (<5 ms)
+pyttsx3>=2.90           # offline TTS — generates yes_sir.wav at first run
+
+# ── Wake word model (optional — install separately for "자비스" detection) ──
+# openwakeword>=0.5.0   # pip install openwakeword  (downloads ONNX models on first run)
+# Without openwakeword, the engine runs in clap-only wake mode.
