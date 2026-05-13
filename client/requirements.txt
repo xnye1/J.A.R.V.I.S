@@ -10,6 +10,10 @@ websockets>=12.0        # already in root requirements — kept here for clarity
 # ── Network (DormSyncManager — lazy-imported, not loaded until first flush) ──
 aiohttp>=3.9.0
 
+# ── Web search & shopping agent ──────────────────────────────────────────────
+beautifulsoup4>=4.12.0  # HTML parsing for DuckDuckGo + shopping scraper
+lxml>=4.9.0             # fast BeautifulSoup parser backend
+
 # ── Hotword & clap detection ─────────────────────────────────────────────────
 PyAudio>=0.2.13         # microphone capture via PortAudio
 webrtcvad>=2.0.10       # VAD gating — skips silent frames, saves CPU

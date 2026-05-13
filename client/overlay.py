@@ -134,6 +134,16 @@ class _WakeBridge(QObject):
     # Payload: WakeEvent.value string ("hotword" or "clap")
     triggered = pyqtSignal(str)
 
+class _AgentBridge(QObject):
+    fetching   = pyqtSignal(bool)    # True = purple ring ON
+    web_ready  = pyqtSignal(object)  # list[SearchResult]
+    shop_ready = pyqtSignal(object)  # list[SearchResult]
+
+class _DiagBridge(QObject):
+    error_flash    = pyqtSignal(str, str)  # levelname, message
+    heartbeat_lost = pyqtSignal()
+    heartbeat_ok   = pyqtSignal()
+
 
 _anger_bridge   = _AngerBridge()
 _study_bridge = _StudyBridge()
@@ -146,6 +156,8 @@ _log_bridge     = _LogBridge()
 _speak_bridge   = _SpeakBridge()
 _flicker_bridge = _FlickerBridge()
 _wake_bridge    = _WakeBridge()
+_agent_bridge   = _AgentBridge()
+_diag_bridge    = _DiagBridge()
 
 _sys_state: dict = {"cpu": 0.0, "mem": 0.0, "disk": 0.0, "focus": 50.0}
 
@@ -357,6 +369,14 @@ class ArcReactorCore(GlassPanel):
         self._spin_anim.setLoopCount(-1)
         self._spin_anim.start()
 
+        # Data-fetching state: purple sweeping outer ring
+        self._fetching:     bool  = False
+        self._fetch_angle:  float = 0.0
+        self._fetch_timer = QTimer(self)
+        self._fetch_timer.setInterval(16)
+        self._fetch_timer.timeout.connect(self._tick_fetch)
+        _agent_bridge.fetching.connect(self._on_fetch_state)
+
         # Breathing glow: forward 0.3→1.0 + backward 1.0→0.3, infinite loop
         fwd = QPropertyAnimation(self, b"breath_val", self)
         fwd.setStartValue(0.3); fwd.setEndValue(1.0)
@@ -427,6 +447,18 @@ class ArcReactorCore(GlassPanel):
 
     def stop_speaking(self) -> None:
         self._is_speaking = False   # timer keeps running until decay → 0
+
+    def _on_fetch_state(self, active: bool) -> None:
+        self._fetching = active
+        if active:
+            self._fetch_timer.start()
+        else:
+            self._fetch_timer.stop()
+        self.update()
+
+    def _tick_fetch(self) -> None:
+        self._fetch_angle = (self._fetch_angle + 3.5) % 360.0
+        self.update()
 
     def _tick_voice(self) -> None:
         """
@@ -528,6 +560,22 @@ class ArcReactorCore(GlassPanel):
         if fury_pct > 0:
             _neon_arc(p, fury_rect, 225.0, -fury_pct / 100.0 * 270, color,
                       [(6, 20), (3, 60), (2, 180)])
+
+        # Data-fetching: purple sweeping double-arc on outermost ring
+        if self._fetching:
+            fetch_r    = r + 28
+            fetch_rect = QRectF(cx - fetch_r, cy - fetch_r, fetch_r * 2, fetch_r * 2)
+            _neon_arc(p, fetch_rect, self._fetch_angle, 110.0,
+                      "#9b59b6", [(5, 22), (3, 68), (2, 185)])
+            _neon_arc(p, fetch_rect, (self._fetch_angle + 180.0) % 360.0, 55.0,
+                      "#6c3483", [(4, 18), (2, 52)])
+            p.setPen(QColor(179, 157, 219, 200))
+            p.setFont(QFont("Share Tech Mono, monospace", 7))
+            p.drawText(
+                QRectF(cx - 65, cy + r + 68, 130, 16),
+                Qt.AlignmentFlag.AlignCenter,
+                "▸ DATA FETCHING",
+            )
 
 
 # ── LogStreamWidget ───────────────────────────────────────────────────────────
@@ -671,6 +719,10 @@ class BioRhythmCard(GlassPanel):
         for av in self._avals.values():
             av.value_changed.connect(self.update)
 
+        self._hb_ok: bool = True
+        _diag_bridge.heartbeat_lost.connect(lambda: self._set_heartbeat(False))
+        _diag_bridge.heartbeat_ok.connect(lambda:   self._set_heartbeat(True))
+
     def set_focus(self, v: float) -> None:
         self._avals["FOCUS"].set_target(v)
 
@@ -681,6 +733,10 @@ class BioRhythmCard(GlassPanel):
         self._avals["CPU"].set_target(cpu)
         self._avals["MEM"].set_target(mem)
 
+    def _set_heartbeat(self, ok: bool) -> None:
+        self._hb_ok = ok
+        self.update()
+
     def paintEvent(self, _e) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -690,6 +746,15 @@ class BioRhythmCard(GlassPanel):
         p.setFont(QFont("Orbitron, monospace", 8, QFont.Weight.Bold))
         p.setPen(QColor(_C_CYAN))
         p.drawText(14, 20, "BIO RHYTHM")
+
+        # Heartbeat indicator dot (top-right corner)
+        hb_c = QColor(_C_GREEN if self._hb_ok else _C_RED)
+        p.setBrush(hb_c)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(self.width() - 22, 10, 8, 8)
+        p.setFont(QFont("Share Tech Mono, monospace", 6))
+        p.setPen(hb_c)
+        p.drawText(self.width() - 42, 20, "HB")
 
         w, h  = self.width(), self.height()
         pad   = 14
@@ -1004,6 +1069,183 @@ class MessageBubble(QWidget):
         )
 
 
+# ── SearchResultsPanel ───────────────────────────────────────────────────────
+
+_PANEL_W  = 340
+_PANEL_PAD = 14
+_ROW_H     = 52
+
+class SearchResultsPanel(GlassPanel):
+    """
+    Right-side floating overlay that slides in to display 2–6 search / shopping
+    results. Slides out automatically after _AUTO_HIDE_S seconds.
+
+    Shopping mode: shows price + delivery, top result can be opened via clap.
+    Web mode: shows title + snippet.
+    """
+
+    _AUTO_HIDE_S = 18
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.hide()
+
+        self._results:     list  = []
+        self._is_shopping: bool  = False
+        self._x_pos:       int   = 0
+
+        # Slide-in animation on the x-position (pyqtProperty via _slide_x)
+        self._slide_x_val: int = 0
+        self._slide_anim = QPropertyAnimation(self, b"slide_x", self)
+        self._slide_anim.setDuration(380)
+        self._slide_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self._slide_out)
+
+        _agent_bridge.web_ready.connect(self._on_web)
+        _agent_bridge.shop_ready.connect(self._on_shop)
+
+    # ── Qt property for slide animation ───────────────────────────────────────
+
+    @pyqtProperty(int)
+    def slide_x(self) -> int:
+        return self._slide_x_val
+
+    @slide_x.setter  # type: ignore[no-redef]
+    def slide_x(self, v: int) -> None:
+        self._slide_x_val = v
+        self._reposition()
+
+    # ── Public ────────────────────────────────────────────────────────────────
+
+    def has_shopping_ready(self) -> bool:
+        return self._is_shopping and bool(self._results)
+
+    def open_top_cart(self) -> None:
+        """Open the cheapest shopping result in browser."""
+        from client.search_agent import SearchAgent
+        if self._results:
+            SearchAgent.open_product(getattr(self._results[0], "url", ""))
+            _log_bridge.line.emit(
+                f"SHOP  open → {getattr(self._results[0], 'title', '')[:35]}", True)
+
+    # ── Slots ─────────────────────────────────────────────────────────────────
+
+    def _on_web(self, results: list) -> None:
+        self._results     = results
+        self._is_shopping = False
+        self._show()
+
+    def _on_shop(self, results: list) -> None:
+        self._results     = results
+        self._is_shopping = True
+        self._show()
+
+    # ── Animation helpers ─────────────────────────────────────────────────────
+
+    def _show(self) -> None:
+        if not self._results or not self.parent():
+            return
+        ph   = self.parent().height()
+        rows = min(len(self._results), 6)
+        h    = _PANEL_PAD * 3 + 24 + rows * _ROW_H
+        pw   = self.parent().width()
+        self.setGeometry(pw, 80, _PANEL_W, h)
+        self.show(); self.raise_()
+
+        target_x = pw - _PANEL_W - 18
+        self._slide_anim.stop()
+        self._slide_anim.setStartValue(self._slide_x_val)
+        self._slide_anim.setEndValue(target_x)
+        self._slide_anim.start()
+
+        self._hide_timer.start(self._AUTO_HIDE_S * 1000)
+        self.update()
+
+    def _slide_out(self) -> None:
+        if not self.parent():
+            return
+        self._slide_anim.stop()
+        self._slide_anim.setStartValue(self._slide_x_val)
+        self._slide_anim.setEndValue(self.parent().width())
+        self._slide_anim.finished.connect(self.hide)
+        self._slide_anim.start()
+
+    def _reposition(self) -> None:
+        if self.parent():
+            self.move(self._slide_x_val, self.y())
+            self.update()
+
+    # ── Painting ──────────────────────────────────────────────────────────────
+
+    def paintEvent(self, _e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._begin_paint(p)
+        self._paint_bg(p)
+
+        w = self.width()
+        mode_label = "SHOP RESULTS" if self._is_shopping else "WEB SEARCH"
+        mode_color = "#b39ddb" if self._is_shopping else _C_CYAN
+
+        p.setFont(QFont("Orbitron, monospace", 8, QFont.Weight.Bold))
+        p.setPen(QColor(mode_color))
+        p.drawText(_PANEL_PAD, 22, mode_label)
+
+        if not self._results:
+            return
+
+        y = _PANEL_PAD + 28
+        for i, r in enumerate(self._results[:6]):
+            self._draw_result_row(p, i, r, y, w, mode_color)
+            y += _ROW_H
+
+    def _draw_result_row(
+        self, p: QPainter, rank: int, result: object,
+        y: int, w: int, accent: str,
+    ) -> None:
+        title    = getattr(result, "title",   "")[:40]
+        snippet  = getattr(result, "snippet", "")[:55]
+        price    = getattr(result, "price",   None)
+        delivery = getattr(result, "delivery_days", None)
+        is_shop  = self._is_shopping and price is not None
+
+        # Row background
+        row_c = QColor(10, 18, 38, int(180 - rank * 12))
+        p.fillRect(_PANEL_PAD - 4, y, w - _PANEL_PAD + 2, _ROW_H - 4, row_c)
+
+        # Rank badge
+        p.setFont(QFont("Orbitron, monospace", 7, QFont.Weight.Bold))
+        badge_c = QColor(accent); badge_c.setAlpha(200)
+        p.setPen(badge_c)
+        p.drawText(_PANEL_PAD, y + 16, f"#{rank + 1}")
+
+        # Title
+        p.setFont(QFont("Share Tech Mono, monospace", 8))
+        p.setPen(QColor(220, 235, 255, 210))
+        p.drawText(_PANEL_PAD + 26, y + 16, title)
+
+        if is_shop:
+            price_obj = result  # has .price_str()
+            price_str = price_obj.price_str() if hasattr(price_obj, "price_str") else f"₩{price:,.0f}"
+            deliv_str = f" · {delivery}일" if delivery else ""
+            p.setFont(QFont("Orbitron, monospace", 8, QFont.Weight.Bold))
+            p.setPen(QColor(_C_LIME))
+            p.drawText(_PANEL_PAD + 26, y + 34, price_str + deliv_str)
+        else:
+            p.setFont(QFont("Share Tech Mono, monospace", 7))
+            p.setPen(QColor(140, 160, 200, 150))
+            p.drawText(_PANEL_PAD + 26, y + 34, snippet)
+
+        # Separator line
+        sep_c = QColor(accent); sep_c.setAlpha(30)
+        p.setPen(QPen(sep_c, 1))
+        p.drawLine(_PANEL_PAD, y + _ROW_H - 6, w - _PANEL_PAD, y + _ROW_H - 6)
+
+
 # ── BootScreen ────────────────────────────────────────────────────────────────
 
 class BootScreen(QWidget):
@@ -1256,6 +1498,16 @@ class JarvisFullHUD(QWidget):
         # ── Message bubble (floating JARVIS speech card) ──────────────────────
         self._msg_bubble = MessageBubble(self)
 
+        # ── Search results panel (right-side slide-in) ────────────────────────
+        self._search_panel = SearchResultsPanel(self)
+
+        # ── Error flash state ─────────────────────────────────────────────────
+        self._err_active:  bool = False
+        self._err_level:   str  = ""
+        self._err_timer = QTimer(self)
+        self._err_timer.setInterval(33)
+        self._err_timer.timeout.connect(self.update)
+
         # ── Boot screen ───────────────────────────────────────────────────────
         self._boot = BootScreen(self)
         self._boot.panels_reveal.connect(self._reveal_panels)
@@ -1271,6 +1523,9 @@ class JarvisFullHUD(QWidget):
         _speak_bridge.started.connect(self._on_speaking_started)
         _speak_bridge.finished.connect(self._on_speaking_done)
         _wake_bridge.triggered.connect(self._on_wake_trigger)
+        _diag_bridge.error_flash.connect(self._on_error_flash)
+        _diag_bridge.heartbeat_lost.connect(lambda: _log_bridge.line.emit("SERVER ⚠  connection lost", True))
+        _diag_bridge.heartbeat_ok.connect(lambda:   _log_bridge.line.emit("SERVER ✓  connection restored", True))
 
     # ── hud_opacity Qt property ───────────────────────────────────────────────
 
@@ -1345,6 +1600,22 @@ class JarvisFullHUD(QWidget):
             self._ripple_timer.start()
         self.update()
 
+    def _on_error_flash(self, level: str, message: str) -> None:
+        self._err_active = True
+        self._err_level  = level
+        self._err_timer.start()
+        if level in ("CRITICAL", "ERROR"):
+            _speak_bridge.started.emit(
+                "시스템 일부에 과부하가 발생했습니다. 로그를 확인해 주십시오.",
+                "critical", 3500,
+            )
+        QTimer.singleShot(2500, self._stop_err_flash)
+
+    def _stop_err_flash(self) -> None:
+        self._err_active = False
+        self._err_timer.stop()
+        self.update()
+
     def _set_ghost(self, ghost: bool) -> None:
         target = 0.12 if ghost else 0.88
         self._ghost_anim.stop()
@@ -1392,7 +1663,12 @@ class JarvisFullHUD(QWidget):
 
     def _on_wake_trigger(self, event_name: str) -> None:
         """Slot — called on Qt main thread via _WakeBridge QueuedConnection."""
-        self.re_awaken(event_name)
+        if event_name == "clap" and self._search_panel.has_shopping_ready():
+            # Clap = confirm: open cheapest cart item in browser
+            self._search_panel.open_top_cart()
+            _speak_bridge.started.emit("Proceeding to cart.", "normal", 1800)
+        else:
+            self.re_awaken(event_name)
 
     def re_awaken(self, event_name: str = "hotword") -> None:
         """
@@ -1444,6 +1720,19 @@ class JarvisFullHUD(QWidget):
         if self._ripples:
             self._draw_ripples(p)
 
+        # Error border flash (crimson 3 Hz pulse)
+        if self._err_active:
+            self._draw_error_border(p)
+
+    def _draw_error_border(self, p: QPainter) -> None:
+        w, h  = self.width(), self.height()
+        phase = (time.time() * 3.0) % 1.0
+        alpha = int(70 + 130 * abs(math.sin(phase * math.pi)))
+        c     = QColor("#8b0000"); c.setAlpha(alpha)
+        p.setPen(QPen(c, 6))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRect(3, 3, w - 6, h - 6)
+
     def _draw_glitch(self, p: QPainter) -> None:
         """220 ms horizontal noise bands + occasional vertical strip."""
         w, h = self.width(), self.height()
@@ -1489,9 +1778,56 @@ class JarvisFullHUD(QWidget):
 
 # ── WebSocket receive loop ────────────────────────────────────────────────────
 
+async def _do_web_search(query: str, agent: object, prefs: object) -> None:
+    """Async task: search → rank → emit results."""
+    _agent_bridge.fetching.emit(True)
+    _log_bridge.line.emit(f"SEARCH  '{query[:35]}'…", False)
+    try:
+        results  = await agent.search(query)   # type: ignore[union-attr]
+        focus_score = _sys_state.get("focus", 50.0)
+        ranked   = prefs.rank_results(results, focus_score, query)  # type: ignore[union-attr]
+        intro    = prefs.briefing_intro(focus_score)  # type: ignore[union-attr]
+        _agent_bridge.web_ready.emit(ranked)
+        count    = len(ranked)
+        _speak_bridge.started.emit(
+            f"{intro}검색 완료 — {count}개 결과", "normal", 2000)
+        _log_bridge.line.emit(f"SEARCH  done  {count} results", True)
+    except Exception as exc:
+        log.error("[Agent] web search failed: %s", exc)
+    finally:
+        _agent_bridge.fetching.emit(False)
+
+
+async def _do_shop_search(keyword: str, agent: object, prefs: object) -> None:
+    """Async task: shop → sort price → rank → emit results."""
+    _agent_bridge.fetching.emit(True)
+    _log_bridge.line.emit(f"SHOP  '{keyword[:35]}'…", False)
+    try:
+        results  = await agent.shop(keyword)   # type: ignore[union-attr]
+        focus_score = _sys_state.get("focus", 50.0)
+        ranked   = prefs.rank_results(results, focus_score, keyword)  # type: ignore[union-attr]
+        intro    = prefs.briefing_intro(focus_score)  # type: ignore[union-attr]
+        _agent_bridge.shop_ready.emit(ranked)
+        if ranked:
+            top      = ranked[0]
+            price_s  = top.price_str() if hasattr(top, "price_str") else ""
+            _speak_bridge.started.emit(
+                f"{intro}최저가 {price_s} — 박수로 장바구니 담기",
+                "normal", 3000,
+            )
+        _log_bridge.line.emit(f"SHOP  done  {len(ranked)} items", True)
+    except Exception as exc:
+        log.error("[Agent] shop search failed: %s", exc)
+    finally:
+        _agent_bridge.fetching.emit(False)
+
+
 async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
     from client.focus_score      import FocusScoreEngine
     from client.predictive_alert import PredictiveAlert
+    from client.search_agent     import SearchAgent
+    from client.preference_engine import PreferenceEngine
+    from client.diagnostics      import HeartbeatMonitor
     import websockets
 
     focus_engine = FocusScoreEngine(
@@ -1500,6 +1836,17 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
     )
     predictor = PredictiveAlert(http_base=http_base)
     asyncio.create_task(predictor.run())
+
+    search_agent = SearchAgent()
+    pref_db_path = __import__("pathlib").Path.home() / ".jarvis" / "jarvis.db"
+    prefs        = PreferenceEngine(pref_db_path)
+
+    heartbeat = HeartbeatMonitor(
+        http_base    = http_base,
+        on_lost      = _diag_bridge.heartbeat_lost.emit,
+        on_restored  = _diag_bridge.heartbeat_ok.emit,
+    )
+    asyncio.create_task(heartbeat.run())
 
     backoff = 2.0
     while True:
@@ -1579,6 +1926,30 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
                         _alert_bridge.flashed.emit(text)
                         _log_bridge.line.emit(f"ALERT  {text[:60]}", True)
 
+                    elif mtype == "search_request":
+                        query = str(msg.get("query", "")).strip()
+                        if query:
+                            asyncio.create_task(
+                                _do_web_search(query, search_agent, prefs))
+
+                    elif mtype == "shop_request":
+                        keyword = str(msg.get("keyword", msg.get("query", ""))).strip()
+                        if keyword:
+                            asyncio.create_task(
+                                _do_shop_search(keyword, search_agent, prefs))
+
+                    elif mtype == "feedback":
+                        # Preference feedback from user: {query, result_title, domain, positive}
+                        try:
+                            prefs.record_feedback(
+                                query          = str(msg.get("query", "")),
+                                result_title   = str(msg.get("result_title", "")),
+                                result_domain  = str(msg.get("domain", "")),
+                                positive       = bool(msg.get("positive", True)),
+                            )
+                        except Exception as fb_exc:
+                            log.debug("[Agent] feedback record error: %s", fb_exc)
+
                     elif mtype == "deploy_failed":
                         _log_bridge.line.emit("DEPLOY FAILED ⚠", True)
 
@@ -1614,6 +1985,15 @@ class JarvisOverlay:
     def run(self) -> None:
         import sys
         app = QApplication.instance() or QApplication(sys.argv)
+
+        # ── Diagnostics: error logger + HUD bridge ────────────────────────────
+        from client.diagnostics import setup_diagnostics
+        import pathlib
+        _log_dir = pathlib.Path("logs")
+        setup_diagnostics(
+            log_dir  = _log_dir,
+            on_error = lambda level, msg: _diag_bridge.error_flash.emit(level, msg),
+        )
 
         # ── Audio: preload before HUD so play() is instant on first wake ─────
         from client.audio_response import AudioResponse
