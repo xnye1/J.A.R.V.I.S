@@ -8,12 +8,15 @@ it delegates to core singletons (state, dispatcher) and services.
 
 from __future__ import annotations
 
+import logging
 import os
+
+log = logging.getLogger("jarvis.routes")
 
 from fastapi import APIRouter, Header, HTTPException
 
 from api.models import (
-    AppOpenRequest, BulkSyncRequest, StudyPlanRequest,
+    AppOpenRequest, BulkSyncRequest, DormBulkSyncRequest, StudyPlanRequest,
     CalendarPayload, ChatRequest, ChatResponse, DeployNotifyRequest,
     FocusRequest, GigaGenieRequest, ReactorRequest,
     RememberRequest, RecallRequest,
@@ -209,6 +212,45 @@ async def memory_stats():
     from services.memory_service import MemoryService
     svc: MemoryService | None = _registry.get("memory_service") if _registry else None
     return svc.stats() if svc else {"error": "unavailable"}
+
+
+# ── Dorm Bulk Sync (PyQt6 overlay / laptop client) ────────────────────────────
+
+_DORM_ALLOWED_PATHS: set[str] = {
+    "/calendar", "/reactor", "/memory/remember", "/focus/start", "/focus/end",
+}
+
+@router.post("/sync/dorm-bulk")
+async def dorm_bulk_sync(req: DormBulkSyncRequest):
+    """
+    Batch HTTP-replay endpoint for the laptop DormSyncManager.
+
+    Accepts requests queued while the client was in dormitory (offline) mode
+    and replays each one via loopback.  Only whitelisted paths are accepted;
+    unknown paths are rejected and counted as failed.
+    """
+    import httpx
+
+    results = []
+    failed  = 0
+    base    = "http://127.0.0.1:8000"   # self-loopback — avoids extra network hop
+
+    async with httpx.AsyncClient(base_url=base, timeout=10) as client:
+        for item in req.requests:
+            if item.path not in _DORM_ALLOWED_PATHS:
+                results.append({"path": item.path, "status": "rejected", "reason": "path not whitelisted"})
+                failed += 1
+                continue
+            try:
+                resp = await client.request(item.method.upper(), item.path, json=item.payload)
+                results.append({"path": item.path, "status": resp.status_code, "body": resp.json()})
+            except Exception as exc:
+                results.append({"path": item.path, "status": "error", "reason": str(exc)})
+                failed += 1
+
+    processed = len(req.requests) - failed
+    log.info("[DormBulkSync] processed=%d failed=%d", processed, failed)
+    return {"processed": processed, "failed": failed, "results": results}
 
 
 # ── Anger Engine ──────────────────────────────────────────────────────────────

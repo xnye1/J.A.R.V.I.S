@@ -1,0 +1,11 @@
+# J.A.R.V.I.S. client process — lean dependency list
+# Target RAM budget: < 200 MB total process RSS
+
+# ── UI overlay ──────────────────────────────────────────────────────────────
+PyQt6>=6.6.0            # transparent overlay; no QtWebEngine, no QML
+
+# ── WebSocket receiver ───────────────────────────────────────────────────────
+websockets>=12.0        # already in root requirements — kept here for clarity
+
+# ── Network (DormSyncManager — lazy-imported, not loaded until first flush) ──
+aiohttp>=3.9.0

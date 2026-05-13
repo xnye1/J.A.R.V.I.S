@@ -71,7 +71,7 @@ class AppOpenRequest(BaseModel):
 
 
 class BulkSyncRequest(BaseModel):
-    """Batch of events buffered offline during dorm isolation."""
+    """Batch of events buffered offline during dorm isolation (iPhone → HUD)."""
     events:    list[dict] = []
     device_id: str        = "iphone"
     synced_at: str        = ""
@@ -84,3 +84,17 @@ class StudyPlanRequest(BaseModel):
     exam_range:     str  = ""
     target_date:    str  = ""
     notes:          str  = ""
+
+
+# ── Laptop DormSyncManager HTTP-replay batch ──────────────────────────────────
+
+class DormQueueItem(BaseModel):
+    method:    str
+    path:      str
+    payload:   dict  = {}
+    queued_at: float = 0.0
+
+
+class DormBulkSyncRequest(BaseModel):
+    """Batch of HTTP requests queued by DormSyncManager while in dormitory."""
+    requests: list[DormQueueItem]
