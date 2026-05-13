@@ -1,36 +1,35 @@
 """
-client/overlay.py — J.A.R.V.I.S. v2.5  Awakening HUD
+client/overlay.py — J.A.R.V.I.S. v2.5  High-Fidelity Motion HUD
 
-Full-screen transparent overlay with Bento-Box grid layout:
+Full-screen transparent overlay with Bento-Box grid + cinematic animations:
 
   ┌─────────────────┬──────────────────────────────┬──────────────────┐
   │                 │                              │                  │
   │  LogStream      │       AwakeningCore           │  BioRhythm       │
-  │  (log stream)   │   (arc reactor + identity)   │   (4 gauges)     │
+  │  (liquid scroll)│   (breathing arc reactor)    │ (rolling gauges) │
   │                 │                              │                  │
   │                 ├──────────────────────────────┴──────────────────┤
   │                 │          FocusHistoryGraph                      │
   └─────────────────┴─────────────────────────────────────────────────┘
 
-Boot sequence (≈ 3.2 s total):
-  0 ms      : BootScreen covers everything — tiny reactor point
-  0–650 ms  : Arc reactor scales up  (QPropertyAnimation, OutCubic)
-  650–1 100 ms : "INITIATING..." + "USER IDENTIFIED: Sir"  (type-writer)
-  1 100 ms  : Grid panels fade in (sequential, 400 ms each)
-  1 800 ms  : "Welcome home, Sir. System fully operational."
-  2 800 ms  : BootScreen fades out
-  3 200 ms  : BootScreen hidden — HUD fully operational
+Cinematic Boot (≈ 3.2 s):
+  0–650 ms   : Arc reactor OutBack bounce-expansion
+  680 ms     : Typewriter scan lines
+  1 150 ms   : 4 panels stagger-reveal (opacity + Y-slide, 80 ms apart)
+  1 600 ms   : Welcome message fade-in
+  2 800 ms   : BootScreen InQuad fade-out
+  3 200 ms   : Boot done + 220 ms glitch flash
 
-Performance notes:
-  - No screen capture in paintEvent (no grabWindow per-frame).
-  - WA_TranslucentBackground: OS compositor handles real transparency.
-  - Panel updates are data-driven (update() only on new WS data).
-  - ArcReactorCore uses QPropertyAnimation (no manual timer).
-  - FocusHistoryGraph and LogStream have independent 33 ms repaint timers.
-  - Ghost mode: setWindowOpacity on the top-level window (whole HUD dims).
+Motion inventory:
+  AnimatedValue      — 500 ms OutExpo rolling-number interpolation
+  ArcReactorCore     — QPropertyAnimation rotation_angle (speed ∝ FocusScore)
+                       QSequentialAnimationGroup 2 s InOutSine breathing glow
+  LogStreamWidget    — 16 ms exponential-decay pixel scroll on new line
+  GlassPanel         — panel_opacity + slide_offset (both pyqtProperty)
+  JarvisFullHUD      — hud_opacity QPropertyAnimation 800 ms ghost fade
+                       QGraphicsDropShadowEffect on every panel
 
-Thread model: same as before — Qt main thread + asyncio WS thread, bridged
-via pyqtSignal (QueuedConnection guarantees thread-safety).
+Thread model: Qt main + asyncio WS thread, bridged via pyqtSignal (QueuedConnection).
 """
 
 from __future__ import annotations
@@ -38,7 +37,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import random
 import threading
 import time
@@ -51,6 +49,7 @@ from PyQt6.QtCore import (
     QPointF,
     QPropertyAnimation,
     QRectF,
+    QSequentialAnimationGroup,
     QTimer,
     Qt,
     pyqtProperty,
@@ -64,21 +63,26 @@ from PyQt6.QtGui import (
     QPainterPath,
     QPen,
 )
-from PyQt6.QtWidgets import QApplication, QGridLayout, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QGraphicsDropShadowEffect,
+    QGridLayout,
+    QWidget,
+)
 
 log = logging.getLogger("jarvis.overlay")
 
 # ── Palette ───────────────────────────────────────────────────────────────────
 
-_C_BG        = QColor(4,   8,  22, 188)   # card fill
-_C_BORDER    = QColor(0,  175, 255,  85)   # card border
-_C_CYAN      = "#00b4ff"
-_C_GREEN     = "#22c55e"
-_C_LIME      = "#4ade80"
-_C_YELLOW    = "#fbbf24"
-_C_ORANGE    = "#ff6b35"
-_C_RED       = "#ef4444"
-_C_DIM       = QColor(140, 160, 200,  90)  # dim label text
+_C_BG     = QColor(4,   8,  22, 188)
+_C_BORDER = QColor(0,  175, 255,  85)
+_C_CYAN   = "#00b4ff"
+_C_GREEN  = "#22c55e"
+_C_LIME   = "#4ade80"
+_C_YELLOW = "#fbbf24"
+_C_ORANGE = "#ff6b35"
+_C_RED    = "#ef4444"
+_C_DIM    = QColor(140, 160, 200,  90)
 
 _STAGE_COLORS: dict[str, str] = {
     "GENTLE":    _C_GREEN,
@@ -92,10 +96,10 @@ _DEFAULT_COLOR = _C_GREEN
 # ── Signal bridges ────────────────────────────────────────────────────────────
 
 class _AngerBridge(QObject):
-    updated = pyqtSignal(float, str, str)     # gauge, stage, color
+    updated = pyqtSignal(float, str, str)
 
 class _StudyBridge(QObject):
-    updated = pyqtSignal(str, float, str)     # subject, pct, dday
+    updated = pyqtSignal(str, float, str)
 
 class _GhostBridge(QObject):
     toggled = pyqtSignal(bool)
@@ -107,13 +111,13 @@ class _MuteBridge(QObject):
     changed = pyqtSignal(bool, str, str)
 
 class _FocusBridge(QObject):
-    scored = pyqtSignal(float)                # 0-100
+    scored = pyqtSignal(float)
 
 class _SysBridge(QObject):
-    updated = pyqtSignal(float, float, float) # cpu%, mem%, disk%
+    updated = pyqtSignal(float, float, float)
 
 class _LogBridge(QObject):
-    line = pyqtSignal(str, bool)             # text, is_important
+    line = pyqtSignal(str, bool)
 
 
 _anger_bridge = _AngerBridge()
@@ -125,13 +129,53 @@ _focus_bridge = _FocusBridge()
 _sys_bridge   = _SysBridge()
 _log_bridge   = _LogBridge()
 
-# Shared system state (asyncio thread writes, Qt thread reads)
 _sys_state: dict = {"cpu": 0.0, "mem": 0.0, "disk": 0.0, "focus": 50.0}
 
-# ── Neon glow helper ──────────────────────────────────────────────────────────
+# ── AnimatedValue — rolling-number interpolator ───────────────────────────────
 
-_NEON_ARC   = [(12, 14), (7, 38), (4, 95), (2, 220)]   # (width, alpha)
-_NEON_THIN  = [(7,  14), (4, 40), (2, 90), (1, 200)]
+class AnimatedValue(QObject):
+    """
+    Float value that smoothly rolls to a new target over `duration_ms`.
+    value_changed is emitted on every animation tick so callers can call update().
+    """
+    value_changed = pyqtSignal()
+
+    def __init__(
+        self,
+        initial:     float = 0.0,
+        duration_ms: int   = 500,
+        parent:      QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._val  = float(initial)
+        self._anim = QPropertyAnimation(self, b"current", self)
+        self._anim.setDuration(duration_ms)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutExpo)
+
+    @pyqtProperty(float)
+    def current(self) -> float:
+        return self._val
+
+    @current.setter  # type: ignore[no-redef]
+    def current(self, v: float) -> None:
+        self._val = v
+        self.value_changed.emit()
+
+    @property
+    def display(self) -> float:
+        return self._val
+
+    def set_target(self, target: float) -> None:
+        self._anim.stop()
+        self._anim.setStartValue(self._val)
+        self._anim.setEndValue(float(target))
+        self._anim.start()
+
+# ── Neon glow helpers ─────────────────────────────────────────────────────────
+
+_NEON_ARC  = [(12, 14), (7, 38), (4, 95), (2, 220)]
+_NEON_THIN = [(7,  14), (4, 40), (2, 90), (1, 200)]
+
 
 def _neon_arc(
     p: QPainter,
@@ -141,11 +185,9 @@ def _neon_arc(
     color: str | QColor,
     layers: list = _NEON_ARC,
 ) -> None:
-    """Draw an arc with neon-glow multi-pass."""
     base = QColor(color)
     for width, alpha in layers:
-        c = QColor(base)
-        c.setAlpha(alpha)
+        c = QColor(base); c.setAlpha(alpha)
         pen = QPen(c, width)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         p.setPen(pen)
@@ -161,52 +203,68 @@ def _neon_ellipse(
     color: str | QColor,
     layers: list = _NEON_THIN,
 ) -> None:
-    """Draw an ellipse (circle) with neon glow."""
     base = QColor(color)
     for width, alpha in layers:
-        c = QColor(base)
-        c.setAlpha(alpha)
+        c = QColor(base); c.setAlpha(alpha)
         p.setPen(QPen(c, width))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(center, rx + width / 2, ry + width / 2)
-
 
 # ── GlassPanel base class ─────────────────────────────────────────────────────
 
 class GlassPanel(QWidget):
     """
     Base for all HUD panels.
-    Provides:
-      - `panel_opacity` pyqtProperty (0→1) for boot-reveal animation
-      - `_paint_bg()`: frosted glass card background
+    pyqtProperties:
+      panel_opacity  (0→1)   — boot fade-in animation target
+      slide_offset   (float) — Y-pixel slide; positive = shifted DOWN
+    Call _begin_paint(p) at the top of every paintEvent.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self._panel_opacity: float = 0.0
+        self._slide_offset:  float = 0.0
+
+    # ── Qt properties ─────────────────────────────────────────────────────────
 
     @pyqtProperty(float)
     def panel_opacity(self) -> float:
         return self._panel_opacity
 
     @panel_opacity.setter  # type: ignore[no-redef]
-    def panel_opacity(self, val: float) -> None:
-        self._panel_opacity = max(0.0, min(1.0, val))
+    def panel_opacity(self, v: float) -> None:
+        self._panel_opacity = max(0.0, min(1.0, v))
         self.update()
 
-    def _paint_bg(self, p: QPainter, accent: QColor | None = None) -> None:
-        """Fill glass background; caller must have set opacity beforehand."""
+    @pyqtProperty(float)
+    def slide_offset(self) -> float:
+        return self._slide_offset
+
+    @slide_offset.setter  # type: ignore[no-redef]
+    def slide_offset(self, v: float) -> None:
+        self._slide_offset = v
+        self.update()
+
+    # ── Paint helpers ─────────────────────────────────────────────────────────
+
+    def _begin_paint(self, p: QPainter) -> None:
+        """Apply opacity + slide translation. Call once at paintEvent start."""
+        p.setOpacity(self._panel_opacity)
+        if self._slide_offset:
+            p.translate(0.0, self._slide_offset)
+
+    def _paint_bg(self, p: QPainter) -> None:
+        """Frosted glass card: dark fill + top sheen + cyan border."""
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         clip = QPainterPath()
         clip.addRoundedRect(r, 14, 14)
         p.setClipPath(clip)
         p.fillRect(self.rect(), _C_BG)
-        # Top sheen
         p.fillRect(0, 0, self.width(), 1, QColor(255, 255, 255, 28))
         p.setClipping(False)
-        border = accent if accent else _C_BORDER
-        p.setPen(QPen(border, 1.0))
+        p.setPen(QPen(_C_BORDER, 1.0))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawPath(clip)
 
@@ -215,24 +273,52 @@ class GlassPanel(QWidget):
 
 class ArcReactorCore(GlassPanel):
     """
-    Center-top panel: spinning arc reactor + identity line.
-    Reactor size = min(w, h) × 0.48. Focus score drives rotation speed.
+    Center-top panel: breathing arc reactor + identity.
+
+    Animations:
+      rotation_angle  : QPropertyAnimation, infinite loop, speed ∝ FocusScore
+      breath_val      : QSequentialAnimationGroup 0.3↔1.0 InOutSine, 4 s cycle
+      _av_fury/_av_focus: AnimatedValue for rolling-number display
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+
         self._angle:    float = 0.0
         self._color:    str   = _DEFAULT_COLOR
-        self._focus:    float = 50.0
         self._stage:    str   = "GENTLE"
-        self._fury_pct: float = 0.0
+        self._breath_val: float = 0.5
 
+        # Rolling display values
+        self._av_fury  = AnimatedValue(0.0,  500, self)
+        self._av_focus = AnimatedValue(50.0, 500, self)
+        self._av_fury.value_changed.connect(self.update)
+        self._av_focus.value_changed.connect(self.update)
+
+        # Rotation
         self._spin_anim = QPropertyAnimation(self, b"rotation_angle", self)
         self._spin_anim.setStartValue(0.0)
         self._spin_anim.setEndValue(360.0)
         self._spin_anim.setDuration(1800)
         self._spin_anim.setLoopCount(-1)
         self._spin_anim.start()
+
+        # Breathing glow: forward 0.3→1.0 + backward 1.0→0.3, infinite loop
+        fwd = QPropertyAnimation(self, b"breath_val", self)
+        fwd.setStartValue(0.3); fwd.setEndValue(1.0)
+        fwd.setDuration(2000)
+        fwd.setEasingCurve(QEasingCurve.Type.InOutSine)
+
+        bwd = QPropertyAnimation(self, b"breath_val", self)
+        bwd.setStartValue(1.0); bwd.setEndValue(0.3)
+        bwd.setDuration(2000)
+        bwd.setEasingCurve(QEasingCurve.Type.InOutSine)
+
+        self._breath_group = QSequentialAnimationGroup(self)
+        self._breath_group.addAnimation(fwd)
+        self._breath_group.addAnimation(bwd)
+        self._breath_group.setLoopCount(-1)
+        self._breath_group.start()
 
     # ── Qt properties ─────────────────────────────────────────────────────────
 
@@ -245,23 +331,31 @@ class ArcReactorCore(GlassPanel):
         self._angle = v % 360.0
         self.update()
 
+    @pyqtProperty(float)
+    def breath_val(self) -> float:
+        return self._breath_val
+
+    @breath_val.setter  # type: ignore[no-redef]
+    def breath_val(self, v: float) -> None:
+        self._breath_val = v
+        self.update()
+
     # ── Public API ────────────────────────────────────────────────────────────
 
     def set_focus(self, score: float) -> None:
-        self._focus = score
-        target = int(3000 - score * 26)
-        target = max(350, min(3000, target))
-        if abs(self._spin_anim.duration() - target) > 60:
+        self._av_focus.set_target(score)
+        target_ms = max(350, min(3000, int(3000 - score * 26)))
+        if abs(self._spin_anim.duration() - target_ms) > 60:
             pct = self._spin_anim.currentTime() / max(self._spin_anim.duration(), 1)
             self._spin_anim.pause()
-            self._spin_anim.setDuration(target)
-            self._spin_anim.setCurrentTime(int(pct * target))
+            self._spin_anim.setDuration(target_ms)
+            self._spin_anim.setCurrentTime(int(pct * target_ms))
             self._spin_anim.resume()
 
     def set_anger(self, gauge: float, stage: str, color: str) -> None:
-        self._fury_pct = gauge
-        self._stage    = stage
-        self._color    = color
+        self._av_fury.set_target(gauge)
+        self._stage = stage
+        self._color = color
         self.update()
 
     # ── Painting ──────────────────────────────────────────────────────────────
@@ -269,33 +363,29 @@ class ArcReactorCore(GlassPanel):
     def paintEvent(self, _e) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setOpacity(self._panel_opacity)
+        self._begin_paint(p)
         self._paint_bg(p)
 
-        w, h = self.width(), self.height()
+        w, h   = self.width(), self.height()
         cx, cy = w / 2.0, h / 2.0 - 18
-
         r_outer = min(w, h) * 0.23
         self._draw_reactor(p, cx, cy, r_outer)
 
         # Identity text
         p.setOpacity(self._panel_opacity * 0.9)
-        title_font = QFont("Orbitron, Share Tech Mono, monospace", 13, QFont.Weight.Bold)
-        p.setFont(title_font)
+        p.setFont(QFont("Orbitron, Share Tech Mono, monospace", 13, QFont.Weight.Bold))
         p.setPen(QColor(_C_CYAN))
         p.drawText(
             QRectF(0, cy + r_outer + 18, w, 28),
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
             "J.A.R.V.I.S.",
         )
-
-        sub_font = QFont("Share Tech Mono, monospace", 9)
-        p.setFont(sub_font)
+        p.setFont(QFont("Share Tech Mono, monospace", 9))
         p.setPen(_C_DIM)
         p.drawText(
             QRectF(0, cy + r_outer + 46, w, 20),
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
-            f"{self._stage}  ·  focus {self._focus:.0f}%",
+            f"{self._stage}  ·  focus {self._av_focus.display:.0f}%",
         )
 
     def _draw_reactor(self, p: QPainter, cx: float, cy: float, r: float) -> None:
@@ -304,37 +394,37 @@ class ArcReactorCore(GlassPanel):
         # Outer orbit ring
         _neon_ellipse(p, QPointF(cx, cy), r, r, color, _NEON_THIN)
 
-        # Three rotating neon arcs (120° apart)
-        arc_r   = r - 4
+        # Three neon arcs
+        arc_r    = r - 4
         arc_rect = QRectF(cx - arc_r, cy - arc_r, arc_r * 2, arc_r * 2)
         for i in range(3):
             _neon_arc(p, arc_rect, self._angle + i * 120.0, 95.0, color)
 
         # Mid ring
-        mid_r = r * 0.52
-        _neon_ellipse(p, QPointF(cx, cy), mid_r, mid_r, color, _NEON_THIN)
+        _neon_ellipse(p, QPointF(cx, cy), r * 0.52, r * 0.52, color, _NEON_THIN)
 
-        # Core glow (filled)
-        core_r = r * 0.26
-        core_c = QColor(color)
-        core_c.setAlpha(200)
+        # Core glow — alpha modulated by breathing animation
+        core_r     = r * 0.26
+        core_alpha = int(160 + 90 * self._breath_val)   # 160→250
+        core_c     = QColor(color); core_c.setAlpha(core_alpha)
         p.setBrush(core_c)
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(QPointF(cx, cy), core_r, core_r)
 
-        # Centre highlight
-        p.setBrush(QColor(255, 255, 255, 230))
+        # Bright centre dot (also breathes)
+        dot_alpha = int(200 + 55 * self._breath_val)
+        p.setBrush(QColor(255, 255, 255, dot_alpha))
         p.drawEllipse(QPointF(cx, cy), core_r * 0.35, core_r * 0.35)
 
-        # Fury arc (background track + value)
+        # Fury outer arc (track + value)
         fury_r    = r + 14
         fury_rect = QRectF(cx - fury_r, cy - fury_r, fury_r * 2, fury_r * 2)
         p.setPen(QPen(QColor(255, 255, 255, 18), 3))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawArc(fury_rect, int(225 * 16), int(-270 * 16))
-        span = -int(self._fury_pct / 100.0 * 270 * 16)
-        if span:
-            _neon_arc(p, fury_rect, 225.0, -self._fury_pct / 100.0 * 270, color,
+        fury_pct = self._av_fury.display
+        if fury_pct > 0:
+            _neon_arc(p, fury_rect, 225.0, -fury_pct / 100.0 * 270, color,
                       [(6, 20), (3, 60), (2, 180)])
 
 
@@ -354,163 +444,189 @@ _LOG_ATMOSPHERICS = [
 ]
 
 class LogStreamWidget(GlassPanel):
-    """Scrolling atmospheric system log — left panel."""
+    """
+    Left panel: scrolling log stream.
+    New lines push existing content up with 16 ms exponential-decay pixel scroll.
+    """
 
     _CAPACITY = 32
+    _LINE_H   = 16
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._lines: deque[tuple[int, str, bool]] = deque(maxlen=self._CAPACITY)
-        # (timestamp_ms, text, is_important)
+        self._scroll_offset: float = 0.0
 
+        # Smooth scroll timer (fires at 60 fps, stops when settled)
+        self._scroll_timer = QTimer(self)
+        self._scroll_timer.setInterval(16)
+        self._scroll_timer.timeout.connect(self._tick_scroll)
+
+        # Atmospheric log line generator
         self._atmos_timer = QTimer(self)
         self._atmos_timer.setInterval(2200)
         self._atmos_timer.timeout.connect(self._gen_atmospheric)
         self._atmos_timer.start()
 
+        # Cursor blink (independent of scroll)
+        self._cursor_on = True
+        self._cursor_timer = QTimer(self)
+        self._cursor_timer.setInterval(500)
+        self._cursor_timer.timeout.connect(self._blink)
+        self._cursor_timer.start()
+
         _log_bridge.line.connect(self._append)
+
+    def _blink(self) -> None:
+        self._cursor_on = not self._cursor_on
+        self.update()
 
     def _append(self, text: str, important: bool) -> None:
         ts = QDateTime.currentDateTime().toString("HH:mm:ss")
-        self._lines.append((QDateTime.currentMSecsSinceEpoch(), f"[{ts}] {text}", important))
+        self._lines.append((QDateTime.currentMSecsSinceEpoch(),
+                             f"[{ts}] {text}", important))
+        # Start pixel-scroll: content will slide up by one line height
+        self._scroll_offset = float(self._LINE_H)
+        if not self._scroll_timer.isActive():
+            self._scroll_timer.start()
         self.update()
 
+    def _tick_scroll(self) -> None:
+        if self._scroll_offset > 0.3:
+            self._scroll_offset *= 0.72   # exponential ease-out
+            self.update()
+        else:
+            self._scroll_offset = 0.0
+            self._scroll_timer.stop()
+            self.update()
+
     def _gen_atmospheric(self) -> None:
-        s  = _sys_state
-        tpl = random.choice(_LOG_ATMOSPHERICS)
-        self._append(tpl, False)
+        self._append(random.choice(_LOG_ATMOSPHERICS), False)
 
     def paintEvent(self, _e) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setOpacity(self._panel_opacity)
+        self._begin_paint(p)
         self._paint_bg(p)
 
         if not self._lines:
             return
 
-        pad   = 12
-        line_h = 16
-        font  = QFont("Share Tech Mono, Consolas, monospace", 8)
-        p.setFont(font)
+        pad    = 12
+        now_ms = QDateTime.currentMSecsSinceEpoch()
+        avail  = self.height() - 36 - pad
+        max_vis = max(1, avail // self._LINE_H)
+        visible = list(self._lines)[-max_vis:]
 
-        # Draw title
-        p.setPen(QColor(_C_CYAN))
         p.setFont(QFont("Orbitron, monospace", 8, QFont.Weight.Bold))
+        p.setPen(QColor(_C_CYAN))
         p.drawText(pad, 20, "SYS LOG")
-        p.setFont(font)
 
-        now_ms   = QDateTime.currentMSecsSinceEpoch()
-        y_start  = 36
-        avail_h  = self.height() - y_start - pad
-        max_vis  = max(1, avail_h // line_h)
-        visible  = list(self._lines)[-max_vis:]
+        p.setFont(QFont("Share Tech Mono, Consolas, monospace", 8))
 
         for i, (ts_ms, text, important) in enumerate(visible):
-            age_s   = (now_ms - ts_ms) / 1000.0
-            age_alpha = max(60, int(220 - age_s * 4))
+            age_alpha = max(55, int(220 - (now_ms - ts_ms) / 1000.0 * 4))
             if important:
-                c = QColor(_C_YELLOW)
-                c.setAlpha(min(220, age_alpha + 40))
+                c = QColor(_C_YELLOW); c.setAlpha(min(220, age_alpha + 40))
+            elif i == len(visible) - 1:
+                c = QColor(_C_GREEN);  c.setAlpha(age_alpha)
             else:
-                c = QColor(_C_GREEN if i == len(visible) - 1 else _C_CYAN)
-                c.setAlpha(age_alpha)
+                c = QColor(_C_CYAN);   c.setAlpha(age_alpha)
             p.setPen(c)
-            y = y_start + i * line_h
+
+            # Apply smooth scroll offset: lines slide UP as new line arrives
+            y = 36 + i * self._LINE_H - self._scroll_offset
             p.drawText(
-                QRectF(pad, y, self.width() - pad * 2, line_h),
+                QRectF(pad, y, self.width() - pad * 2, self._LINE_H),
                 Qt.AlignmentFlag.AlignVCenter,
                 text,
             )
 
-        # Cursor blink on last line
-        if int(time.time() * 2) % 2 == 0:
+        # Blinking cursor on last line
+        if self._cursor_on and visible:
+            cursor_y = 36 + len(visible) * self._LINE_H - self._scroll_offset
             p.setPen(QColor(_C_GREEN))
-            p.drawText(pad, y_start + len(visible) * line_h, "▌")
+            p.drawText(pad, cursor_y + self._LINE_H - 3, "▌")
 
 
 # ── BioRhythmCard ─────────────────────────────────────────────────────────────
 
 class BioRhythmCard(GlassPanel):
-    """Right-top panel: four neon circular gauges."""
+    """Right-top panel: four neon gauges with rolling-number animation."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._values = {"FOCUS": 50.0, "FURY": 0.0, "CPU": 0.0, "MEM": 0.0}
         self._colors = {
             "FOCUS": _C_CYAN,
             "FURY":  _C_ORANGE,
             "CPU":   _C_GREEN,
             "MEM":   _C_YELLOW,
         }
+        self._avals: dict[str, AnimatedValue] = {
+            k: AnimatedValue(50.0 if k == "FOCUS" else 0.0, 500, self)
+            for k in self._colors
+        }
+        for av in self._avals.values():
+            av.value_changed.connect(self.update)
 
     def set_focus(self, v: float) -> None:
-        self._values["FOCUS"] = v;  self.update()
+        self._avals["FOCUS"].set_target(v)
 
     def set_anger(self, v: float) -> None:
-        self._values["FURY"] = v;   self.update()
+        self._avals["FURY"].set_target(v)
 
     def set_sys(self, cpu: float, mem: float, _disk: float) -> None:
-        self._values["CPU"] = cpu
-        self._values["MEM"] = mem
-        self.update()
+        self._avals["CPU"].set_target(cpu)
+        self._avals["MEM"].set_target(mem)
 
     def paintEvent(self, _e) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setOpacity(self._panel_opacity)
+        self._begin_paint(p)
         self._paint_bg(p)
 
-        # Title
-        p.setPen(QColor(_C_CYAN))
         p.setFont(QFont("Orbitron, monospace", 8, QFont.Weight.Bold))
+        p.setPen(QColor(_C_CYAN))
         p.drawText(14, 20, "BIO RHYTHM")
 
-        w, h = self.width(), self.height()
-        pad  = 14
-        title_h = 30
-        cols = 2
-        rows = 2
-        gap  = 10
-        avail_w = w - pad * 2 - gap * (cols - 1)
-        avail_h = h - title_h - pad - gap * (rows - 1)
-        cell_w  = avail_w // cols
-        cell_h  = avail_h // rows
-        g_sz    = min(cell_w, cell_h) - 20
+        w, h  = self.width(), self.height()
+        pad   = 14
+        th    = 30
+        gap   = 10
+        aw    = w - pad * 2 - gap
+        ah    = h - th  - pad - gap
+        cw    = aw // 2
+        ch    = ah // 2
+        g_r   = min(cw, ch) // 2 - 10
 
-        keys = list(self._values.keys())
-        for idx, key in enumerate(keys):
-            col = idx % cols
-            row = idx // cols
-            cx  = pad + col * (cell_w + gap) + cell_w // 2
-            cy  = title_h + row * (cell_h + gap) + cell_h // 2
-            self._draw_gauge(p, cx, cy, g_sz // 2, key,
-                             self._values[key], self._colors[key])
+        for idx, key in enumerate(self._colors):
+            col = idx % 2
+            row = idx // 2
+            cx  = pad + col * (cw + gap) + cw // 2
+            cy  = th  + row * (ch + gap) + ch // 2
+            self._draw_gauge(p, cx, cy, g_r, key,
+                             self._avals[key].display, self._colors[key])
 
     def _draw_gauge(
         self, p: QPainter, cx: int, cy: int, r: int,
         label: str, value: float, color: str,
     ) -> None:
-        # Background track
         rect = QRectF(cx - r, cy - r, r * 2, r * 2)
+        # Background track
         p.setPen(QPen(QColor(255, 255, 255, 22), 4))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawArc(rect, int(225 * 16), int(-270 * 16))
-
-        # Value arc
+        # Value arc with neon glow
         if value > 0:
-            span = -value / 100.0 * 270
-            _neon_arc(p, rect, 225.0, span, color)
-
-        # Center value text
+            _neon_arc(p, rect, 225.0, -value / 100.0 * 270, color)
+        # Centre value (rolling number)
         p.setPen(QColor(color))
-        p.setFont(QFont("Orbitron, monospace", int(r * 0.38), QFont.Weight.Bold))
+        p.setFont(QFont("Orbitron, monospace", max(9, int(r * 0.38)), QFont.Weight.Bold))
         p.drawText(
             QRectF(cx - r, cy - r * 0.5, r * 2, r),
             Qt.AlignmentFlag.AlignCenter,
             f"{value:.0f}",
         )
-
         # Label
         p.setFont(QFont("Share Tech Mono, monospace", max(7, int(r * 0.22))))
         p.setPen(_C_DIM)
@@ -524,23 +640,20 @@ class BioRhythmCard(GlassPanel):
 # ── FocusHistoryGraph ─────────────────────────────────────────────────────────
 
 class FocusHistoryGraph(GlassPanel):
-    """Bottom-center+right panel: scrolling EWMA focus score line chart."""
+    """Bottom-right panel: scrolling EWMA focus line chart."""
 
-    _CAPACITY = 120   # ~20 min at 10-s intervals
+    _CAPACITY = 120
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._history: deque[float] = deque(maxlen=self._CAPACITY)
-
-        # Seed with neutral values so graph isn't empty on boot
         for _ in range(20):
             self._history.append(50.0 + random.uniform(-3, 3))
 
-        # Gentle repaint timer so cursor/line animates even without new data
-        self._tick = QTimer(self)
-        self._tick.setInterval(1000)
-        self._tick.timeout.connect(self.update)
-        self._tick.start()
+        self._tick_timer = QTimer(self)
+        self._tick_timer.setInterval(1000)
+        self._tick_timer.timeout.connect(self.update)
+        self._tick_timer.start()
 
     def push(self, score: float) -> None:
         self._history.append(score)
@@ -549,146 +662,121 @@ class FocusHistoryGraph(GlassPanel):
     def paintEvent(self, _e) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setOpacity(self._panel_opacity)
+        self._begin_paint(p)
         self._paint_bg(p)
 
         w, h = self.width(), self.height()
-        pad_l, pad_r, pad_t, pad_b = 48, 18, 30, 22
+        pl, pr, pt, pb = 48, 18, 30, 22
 
-        # Title
-        p.setPen(QColor(_C_CYAN))
         p.setFont(QFont("Orbitron, monospace", 8, QFont.Weight.Bold))
-        p.drawText(pad_l, 20, "FOCUS HISTORY  (EWMA)")
+        p.setPen(QColor(_C_CYAN))
+        p.drawText(pl, 20, "FOCUS HISTORY  (EWMA)")
 
-        gw = w - pad_l - pad_r
-        gh = h - pad_t - pad_b
+        gw = w - pl - pr
+        gh = h - pt - pb
+
+        def _to_xy(i: int, v: float, n: int):
+            x = pl + gw * i / max(n - 1, 1)
+            y = pt + gh - gh * max(0.0, min(100.0, v)) / 100.0
+            return x, y
 
         # Grid
         p.setPen(QPen(QColor(0, 180, 255, 22), 1))
         for pct in (25, 50, 75, 100):
-            y = pad_t + gh - gh * pct / 100
-            p.drawLine(pad_l, int(y), pad_l + gw, int(y))
+            y = pt + gh - gh * pct / 100
+            p.drawLine(pl, int(y), pl + gw, int(y))
 
-        # Threshold lines
-        def _thresh(v: float, color: str, label: str) -> None:
-            y = int(pad_t + gh - gh * v / 100)
-            pen = QPen(QColor(color), 1, Qt.PenStyle.DashLine)
-            p.setPen(pen)
-            p.drawLine(pad_l, y, pad_l + gw, y)
+        # Thresholds
+        for v, c, lbl in [(70.0, _C_CYAN, "GHOST"), (60.0, _C_YELLOW, "BREAK")]:
+            y = int(pt + gh - gh * v / 100)
+            p.setPen(QPen(QColor(c), 1, Qt.PenStyle.DashLine))
+            p.drawLine(pl, y, pl + gw, y)
             p.setFont(QFont("Share Tech Mono, monospace", 7))
-            p.setPen(QColor(color))
-            p.drawText(2, y + 4, label)
+            p.setPen(QColor(c)); p.drawText(2, y + 4, lbl)
 
-        _thresh(70.0, _C_CYAN,   "GHOST")
-        _thresh(60.0, _C_YELLOW, "BREAK")
-
-        # Y axis labels
+        # Y labels
         p.setFont(QFont("Share Tech Mono, monospace", 7))
         p.setPen(_C_DIM)
         for pct in (0, 25, 50, 75, 100):
-            y = int(pad_t + gh - gh * pct / 100)
-            p.drawText(1, y + 4, str(pct))
+            p.drawText(1, int(pt + gh - gh * pct / 100) + 4, str(pct))
 
-        if len(self._history) < 2:
+        pts = list(self._history)
+        n   = len(pts)
+        if n < 2:
             return
 
-        points = list(self._history)
-        n      = len(points)
-
-        def _to_xy(i: int, v: float):
-            x = pad_l + gw * i / (n - 1)
-            y = pad_t + gh - gh * max(0.0, min(100.0, v)) / 100.0
-            return x, y
-
-        # Area fill (gradient below line)
+        # Area fill
         fill = QPainterPath()
-        x0, y0 = _to_xy(0, points[0])
-        fill.moveTo(x0, pad_t + gh)
+        x0, y0 = _to_xy(0, pts[0], n)
+        fill.moveTo(x0, pt + gh)
         fill.lineTo(x0, y0)
-        for i, v in enumerate(points[1:], 1):
-            xi, yi = _to_xy(i, v)
-            fill.lineTo(xi, yi)
-        fill.lineTo(_to_xy(n - 1, points[-1])[0], pad_t + gh)
+        for i, v in enumerate(pts[1:], 1):
+            fill.lineTo(*_to_xy(i, v, n))
+        fill.lineTo(_to_xy(n - 1, pts[-1], n)[0], pt + gh)
         fill.closeSubpath()
-
-        grad = QLinearGradient(0, pad_t, 0, pad_t + gh)
+        grad = QLinearGradient(0, pt, 0, pt + gh)
         grad.setColorAt(0.0, QColor(0, 200, 100, 55))
         grad.setColorAt(1.0, QColor(0, 200, 100,  0))
         p.fillPath(fill, grad)
 
-        # Line
-        line_path = QPainterPath()
-        x0, y0 = _to_xy(0, points[0])
-        line_path.moveTo(x0, y0)
-        for i, v in enumerate(points[1:], 1):
-            line_path.lineTo(*_to_xy(i, v))
-
+        # Neon line (3-pass glow)
+        line = QPainterPath()
+        line.moveTo(*_to_xy(0, pts[0], n))
+        for i, v in enumerate(pts[1:], 1):
+            line.lineTo(*_to_xy(i, v, n))
         for width, alpha in [(5, 18), (3, 55), (1.5, 210)]:
-            c = QColor(_C_GREEN)
-            c.setAlpha(alpha)
-            p.setPen(QPen(c, width))
-            p.drawPath(line_path)
+            c = QColor(_C_GREEN); c.setAlpha(alpha)
+            p.setPen(QPen(c, width)); p.drawPath(line)
 
-        # Current value dot
-        lx, ly = _to_xy(n - 1, points[-1])
+        # Live dot
+        lx, ly = _to_xy(n - 1, pts[-1], n)
         p.setBrush(QColor(_C_GREEN))
         p.setPen(QPen(QColor(255, 255, 255, 180), 1))
         p.drawEllipse(QPointF(lx, ly), 4.0, 4.0)
-
-        # Current value label
         p.setFont(QFont("Orbitron, monospace", 9, QFont.Weight.Bold))
         p.setPen(QColor(_C_GREEN))
-        p.drawText(int(lx) + 8, int(ly) + 4, f"{points[-1]:.0f}")
+        p.drawText(int(lx) + 8, int(ly) + 4, f"{pts[-1]:.0f}")
 
 
 # ── BootScreen ────────────────────────────────────────────────────────────────
 
 class BootScreen(QWidget):
     """
-    Full-size child overlay that plays the Awakening boot sequence.
-    Emits panels_reveal at ~1 100 ms and boot_done at ~3 200 ms.
+    Full-size child overlay driving the Awakening boot sequence.
+
+    Reactor expansion uses OutBack easing for a bouncy, energetic reveal.
+    Emits panels_reveal at 1 150 ms and boot_done at ~3 200 ms.
     """
 
     panels_reveal = pyqtSignal()
     boot_done     = pyqtSignal()
-
-    # Phases
-    _PH_IDLE    = 0
-    _PH_REACTOR = 1
-    _PH_SCAN    = 2
-    _PH_WELCOME = 3
-    _PH_FADEOUT = 4
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setGeometry(parent.rect())
 
-        self._phase        = self._PH_IDLE
-        self._reactor_sc   = 0.0
-        self._fade_op      = 1.0
-        self._scan_lines   = ["", ""]         # two typed lines
-        self._full_scan    = [
-            "INITIATING NEURAL NETWORK...",
-            "USER IDENTIFIED:  Sir",
-        ]
-        self._scan_idx     = [0, 0]           # chars revealed per line
-        self._welcome_op   = 0.0
-        self._angle        = 0.0
+        self._reactor_sc: float = 0.0
+        self._fade_op:    float = 1.0
+        self._scan_lines: list[str] = ["", ""]
+        self._full_scan   = ["INITIATING NEURAL NETWORK...", "USER IDENTIFIED:  Sir"]
+        self._scan_idx    = [0, 0]
+        self._welcome_op: float = 0.0
+        self._angle:      float = 0.0
 
-        # Spin timer (independent from main reactor)
+        # Boot-reactor spin (independent of main reactor)
         self._spin_timer = QTimer(self)
         self._spin_timer.setInterval(16)
         self._spin_timer.timeout.connect(self._tick_spin)
 
-        # Reactor scale animation
+        # OutBack reactor expansion  ← key change: OutCubic → OutBack
         self._sc_anim = QPropertyAnimation(self, b"reactor_scale", self)
         self._sc_anim.setStartValue(0.0)
         self._sc_anim.setEndValue(1.0)
         self._sc_anim.setDuration(650)
-        self._sc_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._sc_anim.setEasingCurve(QEasingCurve.Type.OutBack)
 
-        # Fade-out animation
+        # Fade-out
         self._fade_anim = QPropertyAnimation(self, b"fade_opacity", self)
         self._fade_anim.setStartValue(1.0)
         self._fade_anim.setEndValue(0.0)
@@ -696,12 +784,11 @@ class BootScreen(QWidget):
         self._fade_anim.setEasingCurve(QEasingCurve.Type.InQuad)
         self._fade_anim.finished.connect(self._on_fade_done)
 
-        # Typing timers
+        # Typewriter timers
         self._type_timers = [QTimer(self), QTimer(self)]
-        self._type_timers[0].setInterval(55)
-        self._type_timers[1].setInterval(55)
-        self._type_timers[0].timeout.connect(lambda: self._type(0))
-        self._type_timers[1].timeout.connect(lambda: self._type(1))
+        for i, t in enumerate(self._type_timers):
+            t.setInterval(55)
+            t.timeout.connect(lambda _, li=i: self._type(li))
 
         # Welcome fade
         self._welcome_timer = QTimer(self)
@@ -716,8 +803,7 @@ class BootScreen(QWidget):
 
     @reactor_scale.setter  # type: ignore[no-redef]
     def reactor_scale(self, v: float) -> None:
-        self._reactor_sc = v
-        self.update()
+        self._reactor_sc = v; self.update()
 
     @pyqtProperty(float)
     def fade_opacity(self) -> float:
@@ -725,15 +811,12 @@ class BootScreen(QWidget):
 
     @fade_opacity.setter  # type: ignore[no-redef]
     def fade_opacity(self, v: float) -> None:
-        self._fade_op = v
-        self.update()
+        self._fade_op = v; self.update()
 
     # ── Sequence control ──────────────────────────────────────────────────────
 
     def start(self) -> None:
-        self._phase = self._PH_REACTOR
-        self.show()
-        self.raise_()
+        self.show(); self.raise_()
         self._spin_timer.start()
         self._sc_anim.start()
         QTimer.singleShot(680,  self._begin_scan_line0)
@@ -742,20 +825,10 @@ class BootScreen(QWidget):
         QTimer.singleShot(1600, self._begin_welcome)
         QTimer.singleShot(2800, self._begin_fadeout)
 
-    def _begin_scan_line0(self) -> None:
-        self._phase = self._PH_SCAN
-        self._type_timers[0].start()
-
-    def _begin_scan_line1(self) -> None:
-        self._type_timers[1].start()
-
-    def _begin_welcome(self) -> None:
-        self._phase = self._PH_WELCOME
-        self._welcome_timer.start()
-
-    def _begin_fadeout(self) -> None:
-        self._phase = self._PH_FADEOUT
-        self._fade_anim.start()
+    def _begin_scan_line0(self) -> None: self._type_timers[0].start()
+    def _begin_scan_line1(self) -> None: self._type_timers[1].start()
+    def _begin_welcome(self)   -> None: self._welcome_timer.start()
+    def _begin_fadeout(self)   -> None: self._fade_anim.start()
 
     def _on_fade_done(self) -> None:
         self._spin_timer.stop()
@@ -767,15 +840,14 @@ class BootScreen(QWidget):
         self._angle = (self._angle + 3.0) % 360.0
         self.update()
 
-    def _type(self, line_idx: int) -> None:
-        si = self._scan_idx[line_idx]
-        full = self._full_scan[line_idx]
-        if si < len(full):
-            self._scan_lines[line_idx] = full[: si + 1]
-            self._scan_idx[line_idx]   += 1
+    def _type(self, li: int) -> None:
+        si = self._scan_idx[li]
+        if si < len(self._full_scan[li]):
+            self._scan_lines[li] = self._full_scan[li][: si + 1]
+            self._scan_idx[li] += 1
             self.update()
         else:
-            self._type_timers[line_idx].stop()
+            self._type_timers[li].stop()
 
     def _tick_welcome(self) -> None:
         self._welcome_op = min(1.0, self._welcome_op + 0.04)
@@ -789,46 +861,43 @@ class BootScreen(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setOpacity(self._fade_op)
-
-        # Dark backdrop
         p.fillRect(self.rect(), QColor(2, 5, 15, 235))
 
-        w, h = self.width(), self.height()
+        w, h   = self.width(), self.height()
         cx, cy = w / 2.0, h / 2.0 - 60
 
-        # Arc reactor
         r = min(w, h) * 0.18 * self._reactor_sc
         if r > 2:
             self._draw_boot_reactor(p, cx, cy, r)
 
         # Scan text
-        if self._phase in (self._PH_SCAN, self._PH_WELCOME, self._PH_FADEOUT):
-            scan_font = QFont("Share Tech Mono, Consolas, monospace", 13)
-            p.setFont(scan_font)
+        if self._scan_lines[0] or self._scan_lines[1]:
+            font = QFont("Share Tech Mono, Consolas, monospace", 13)
+            p.setFont(font)
             for i, txt in enumerate(self._scan_lines):
-                if txt:
-                    c = QColor(_C_CYAN if i == 0 else _C_GREEN)
-                    p.setPen(c)
-                    p.drawText(
-                        QRectF(0, cy + r + 30 + i * 28, w, 28),
-                        Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
-                        txt + ("▌" if self._type_timers[i].isActive() and
-                               int(time.time() * 4) % 2 == 0 else ""),
-                    )
+                if not txt:
+                    continue
+                c = QColor(_C_CYAN if i == 0 else _C_GREEN)
+                cursor = "▌" if (self._type_timers[i].isActive()
+                                  and int(time.time() * 4) % 2 == 0) else ""
+                p.setPen(c)
+                p.drawText(
+                    QRectF(0, cy + r + 30 + i * 30, w, 30),
+                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+                    txt + cursor,
+                )
 
         # Welcome message
         if self._welcome_op > 0.01:
             p.setOpacity(self._fade_op * self._welcome_op)
-            wf = QFont("Orbitron, monospace", 18, QFont.Weight.Bold)
-            p.setFont(wf)
+            p.setFont(QFont("Orbitron, monospace", 18, QFont.Weight.Bold))
             p.setPen(QColor(_C_CYAN))
             p.drawText(
                 QRectF(0, h / 2.0 + 80, w, 44),
                 Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
                 "Welcome home, Sir.",
             )
-            sf = QFont("Share Tech Mono, monospace", 11)
-            p.setFont(sf)
+            p.setFont(QFont("Share Tech Mono, monospace", 11))
             p.setPen(QColor(140, 200, 255, 200))
             p.drawText(
                 QRectF(0, h / 2.0 + 124, w, 28),
@@ -838,19 +907,14 @@ class BootScreen(QWidget):
 
     def _draw_boot_reactor(self, p: QPainter, cx: float, cy: float, r: float) -> None:
         _neon_ellipse(p, QPointF(cx, cy), r, r, _C_CYAN, _NEON_THIN)
-
         arc_r    = r - 4
         arc_rect = QRectF(cx - arc_r, cy - arc_r, arc_r * 2, arc_r * 2)
         for i in range(3):
             _neon_arc(p, arc_rect, self._angle + i * 120.0, 95.0, _C_CYAN)
-
         _neon_ellipse(p, QPointF(cx, cy), r * 0.52, r * 0.52, _C_CYAN, _NEON_THIN)
-
         core_r = r * 0.28
-        core_c = QColor(_C_CYAN)
-        core_c.setAlpha(200)
-        p.setBrush(core_c)
-        p.setPen(Qt.PenStyle.NoPen)
+        core_c = QColor(_C_CYAN); core_c.setAlpha(200)
+        p.setBrush(core_c); p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(QPointF(cx, cy), core_r, core_r)
         p.setBrush(QColor(255, 255, 255, 230))
         p.drawEllipse(QPointF(cx, cy), core_r * 0.35, core_r * 0.35)
@@ -860,8 +924,12 @@ class BootScreen(QWidget):
 
 class JarvisFullHUD(QWidget):
     """
-    Full-screen transparent overlay. Contains Bento grid + BootScreen.
-    Ghost mode: setWindowOpacity on this widget dims the entire HUD.
+    Full-screen transparent overlay. Bento grid + cinematic polish.
+
+    Ghost mode: 800 ms QPropertyAnimation on hud_opacity.
+    Panel reveal: simultaneous panel_opacity + slide_offset animations.
+    Boot glitch: 220 ms horizontal noise flash on boot completion.
+    Drop shadows: QGraphicsDropShadowEffect on every panel.
     """
 
     def __init__(self) -> None:
@@ -890,24 +958,33 @@ class JarvisFullHUD(QWidget):
         self._bio   = BioRhythmCard(self)
         self._graph = FocusHistoryGraph(self)
 
-        grid.addWidget(self._log,   0, 0, 2, 1)   # full left column
+        grid.addWidget(self._log,   0, 0, 2, 1)
         grid.addWidget(self._core,  0, 1, 1, 1)
         grid.addWidget(self._bio,   0, 2, 1, 1)
-        grid.addWidget(self._graph, 1, 1, 1, 2)   # bottom, spans col 1-2
+        grid.addWidget(self._graph, 1, 1, 1, 2)
 
-        # ── Ghost mode ────────────────────────────────────────────────────────
-        self._ghost_target  = 0.88
-        self._ghost_current = 0.88
-        self.setWindowOpacity(self._ghost_current)
-        self._ghost_timer = QTimer(self)
-        self._ghost_timer.setInterval(16)
-        self._ghost_timer.timeout.connect(self._step_ghost)
+        # Drop shadows — cyan glow gives each panel depth/separation
+        self._apply_shadows()
 
-        # Ripple state (full-screen)
+        # ── Ghost mode: 800 ms smooth opacity via pyqtProperty ────────────────
+        self._ghost_opacity: float = 0.88
+        self.setWindowOpacity(self._ghost_opacity)
+
+        self._ghost_anim = QPropertyAnimation(self, b"hud_opacity", self)
+        self._ghost_anim.setDuration(800)
+        self._ghost_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
+        # ── Alert ripples ─────────────────────────────────────────────────────
         self._ripples: list[dict] = []
         self._ripple_timer = QTimer(self)
         self._ripple_timer.setInterval(33)
         self._ripple_timer.timeout.connect(self.update)
+
+        # ── Glitch effect (post-boot flash) ───────────────────────────────────
+        self._glitch_active = False
+        self._glitch_timer  = QTimer(self)
+        self._glitch_timer.setInterval(33)
+        self._glitch_timer.timeout.connect(self.update)
 
         # ── Boot screen ───────────────────────────────────────────────────────
         self._boot = BootScreen(self)
@@ -915,14 +992,41 @@ class JarvisFullHUD(QWidget):
         self._boot.boot_done.connect(self._on_boot_done)
         self._panel_anims: list[QPropertyAnimation] = []
 
-        # ── Wire bridges ──────────────────────────────────────────────────────
+        # ── Bridge connections ────────────────────────────────────────────────
         _anger_bridge.updated.connect(self._on_anger)
         _focus_bridge.scored.connect(self._on_focus)
         _sys_bridge.updated.connect(self._on_sys)
         _alert_bridge.flashed.connect(self._on_alert)
         _ghost_bridge.toggled.connect(self._set_ghost)
 
-    # ── Slots ─────────────────────────────────────────────────────────────────
+    # ── hud_opacity Qt property ───────────────────────────────────────────────
+
+    @pyqtProperty(float)
+    def hud_opacity(self) -> float:
+        return self._ghost_opacity
+
+    @hud_opacity.setter  # type: ignore[no-redef]
+    def hud_opacity(self, v: float) -> None:
+        self._ghost_opacity = v
+        self.setWindowOpacity(max(0.05, min(1.0, v)))
+
+    # ── Drop shadow setup ─────────────────────────────────────────────────────
+
+    def _apply_shadows(self) -> None:
+        configs = [
+            (self._log,   QColor(0, 180, 255,  85), 22),
+            (self._core,  QColor(0, 180, 255, 105), 28),
+            (self._bio,   QColor(0, 140, 255,  80), 22),
+            (self._graph, QColor(0, 200, 100,  70), 22),
+        ]
+        for widget, color, radius in configs:
+            eff = QGraphicsDropShadowEffect(widget)
+            eff.setBlurRadius(radius)
+            eff.setColor(color)
+            eff.setOffset(0, 2)
+            widget.setGraphicsEffect(eff)
+
+    # ── Data slots ────────────────────────────────────────────────────────────
 
     def _on_anger(self, gauge: float, stage: str, color: str) -> None:
         self._core.set_anger(gauge, stage, color)
@@ -935,69 +1039,95 @@ class JarvisFullHUD(QWidget):
 
     def _on_sys(self, cpu: float, mem: float, disk: float) -> None:
         self._bio.set_sys(cpu, mem, disk)
-        _log_bridge.line.emit(
-            f"CPU {cpu:.0f}%  MEM {mem:.0f}%  DISK {disk:.0f}%", False
-        )
+        _log_bridge.line.emit(f"CPU {cpu:.0f}%  MEM {mem:.0f}%  DISK {disk:.0f}%", False)
 
     def _on_alert(self, _msg: str) -> None:
-        self._ripples.append({
-            "start_ms": QDateTime.currentMSecsSinceEpoch(),
-            "color": _C_YELLOW,
-        })
+        now = QDateTime.currentMSecsSinceEpoch()
+        self._ripples.append({"start_ms": now, "color": _C_YELLOW})
         QTimer.singleShot(200, lambda: self._ripples.append({
-            "start_ms": QDateTime.currentMSecsSinceEpoch(),
-            "color": _C_YELLOW,
-        }))
+            "start_ms": QDateTime.currentMSecsSinceEpoch(), "color": _C_YELLOW}))
         if not self._ripple_timer.isActive():
             self._ripple_timer.start()
         self.update()
 
     def _set_ghost(self, ghost: bool) -> None:
-        self._ghost_target = 0.12 if ghost else 0.88
-        self._ghost_timer.start()
-
-    def _step_ghost(self) -> None:
-        diff = self._ghost_target - self._ghost_current
-        if abs(diff) < 0.006:
-            self._ghost_current = self._ghost_target
-            self._ghost_timer.stop()
-        else:
-            self._ghost_current += diff * 0.10
-        self.setWindowOpacity(max(0.05, min(1.0, self._ghost_current)))
+        target = 0.12 if ghost else 0.88
+        self._ghost_anim.stop()
+        self._ghost_anim.setStartValue(self._ghost_opacity)
+        self._ghost_anim.setEndValue(target)
+        self._ghost_anim.start()
 
     # ── Boot animation ────────────────────────────────────────────────────────
 
     def _reveal_panels(self) -> None:
-        """Stagger-fade each panel in after boot reactor completes."""
-        panels  = [self._log, self._core, self._bio, self._graph]
-        delays  = [0, 80, 160, 280]
+        """Stagger-reveal: opacity 0→1 + Y slide 32→0, 80 ms apart."""
+        panels = [self._log, self._core, self._bio, self._graph]
+        delays = [0, 80, 160, 280]
         for panel, delay in zip(panels, delays):
-            def _start(w=panel):
-                anim = QPropertyAnimation(w, b"panel_opacity", self)
-                anim.setStartValue(0.0)
-                anim.setEndValue(1.0)
-                anim.setDuration(420)
-                anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
-                anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
-                self._panel_anims.append(anim)
+            def _start(w=panel) -> None:
+                # Opacity
+                op = QPropertyAnimation(w, b"panel_opacity", self)
+                op.setStartValue(0.0); op.setEndValue(1.0)
+                op.setDuration(440)
+                op.setEasingCurve(QEasingCurve.Type.InOutQuad)
+                op.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+                # Y slide-up (start below, ease to normal position)
+                sl = QPropertyAnimation(w, b"slide_offset", self)
+                sl.setStartValue(34.0); sl.setEndValue(0.0)
+                sl.setDuration(480)
+                sl.setEasingCurve(QEasingCurve.Type.OutCubic)
+                sl.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+                self._panel_anims.extend([op, sl])
             QTimer.singleShot(delay, _start)
 
     def _on_boot_done(self) -> None:
-        log.info("[HUD] Boot sequence complete.")
+        log.info("[HUD] Boot complete.")
         _log_bridge.line.emit("JARVIS v2.5  boot complete", True)
+        # 220 ms glitch flash
+        self._glitch_active = True
+        self._glitch_timer.start()
+        QTimer.singleShot(220, self._end_glitch)
 
-    # ── paintEvent: global dark veil + ripples ─────────────────────────────────
+    def _end_glitch(self) -> None:
+        self._glitch_active = False
+        self._glitch_timer.stop()
+        self.update()
+
+    # ── paintEvent ───────────────────────────────────────────────────────────
 
     def paintEvent(self, _e) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Very subtle dark overlay over entire desktop
+        # Subtle desktop darkening
         p.fillRect(self.rect(), QColor(0, 0, 0, 45))
 
+        # Boot glitch effect
+        if self._glitch_active:
+            self._draw_glitch(p)
+
         # Full-screen alert ripples
-        if not self._ripples:
-            return
+        if self._ripples:
+            self._draw_ripples(p)
+
+    def _draw_glitch(self, p: QPainter) -> None:
+        """220 ms horizontal noise bands + occasional vertical strip."""
+        w, h = self.width(), self.height()
+        rng  = random.Random(int(time.time() * 22))   # seed → ~22 fps flicker
+        for _ in range(16):
+            y   = rng.randint(0, h - 1)
+            ht  = rng.randint(1, 3)
+            alp = rng.randint(12, 52)
+            c   = QColor(_C_CYAN if rng.random() > 0.35 else "#ffffff")
+            c.setAlpha(alp)
+            p.fillRect(0, y, w, ht, c)
+        if rng.random() > 0.60:
+            x  = rng.randint(0, max(1, w - 100))
+            gw = rng.randint(2, 8)
+            c  = QColor(_C_CYAN); c.setAlpha(rng.randint(12, 35))
+            p.fillRect(x, 0, gw, h, c)
+
+    def _draw_ripples(self, p: QPainter) -> None:
         now_ms = QDateTime.currentMSecsSinceEpoch()
         cx, cy = self.width() / 2.0, self.height() / 2.0
         max_r  = max(self.width(), self.height()) * 0.85
@@ -1007,8 +1137,7 @@ class JarvisFullHUD(QWidget):
             t = (now_ms - rip["start_ms"]) / 900.0
             if t >= 1.0:
                 continue
-            c = QColor(rip["color"])
-            c.setAlpha(int(90 * (1.0 - t)))
+            c = QColor(rip["color"]); c.setAlpha(int(90 * (1.0 - t)))
             p.setPen(QPen(c, 2.0))
             p.drawEllipse(QPointF(cx, cy), t * max_r, t * max_r)
             alive.append(rip)
@@ -1016,10 +1145,9 @@ class JarvisFullHUD(QWidget):
         if not self._ripples:
             self._ripple_timer.stop()
 
-    # ── Start ─────────────────────────────────────────────────────────────────
+    # ── Entry ─────────────────────────────────────────────────────────────────
 
     def awaken(self) -> None:
-        """Show window and launch boot sequence."""
         self.showFullScreen()
         self._boot.setGeometry(self.rect())
         self._boot.start()
@@ -1073,11 +1201,9 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
                         pct     = float(data.get("progress", 0.0))
                         if subject:
                             _study_bridge.updated.emit(
-                                subject, pct, str(data.get("dday", ""))
-                            )
+                                subject, pct, str(data.get("dday", "")))
                             _log_bridge.line.emit(
-                                f"STUDY  {subject}  {pct:.0f}%", False
-                            )
+                                f"STUDY  {subject}  {pct:.0f}%", False)
 
                     elif mtype == "status":
                         cpu  = float(msg.get("cpu_percent",  0.0))
@@ -1144,7 +1270,6 @@ class JarvisOverlay:
         app = QApplication.instance() or QApplication(sys.argv)
 
         hud = JarvisFullHUD()
-
         ws_thread = threading.Thread(
             target=_run_ws_thread,
             args=(self._ws_url, self._http_base),
