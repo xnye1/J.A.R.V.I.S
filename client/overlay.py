@@ -18,6 +18,19 @@ Requires: pip install PyQt6-WebEngine
 
 from __future__ import annotations
 
+import os
+
+# ── GPU / driver flags — MUST be set before any Qt module is imported ──────────
+# Fixes "Failed to create GLES3 context" on laptops with incompatible GPU drivers
+# by forcing Chromium to use software rasterization instead of GPU acceleration.
+os.environ.setdefault(
+    "QTWEBENGINE_CHROMIUM_FLAGS",
+    "--disable-gpu --disable-dev-shm-usage --no-sandbox",
+)
+os.environ.setdefault("QSG_RHI_BACKEND",            "software")
+os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+# ──────────────────────────────────────────────────────────────────────────────
+
 import asyncio
 import json
 import logging
@@ -32,12 +45,16 @@ try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     from PyQt6.QtWebEngineCore import QWebEngineSettings
     from PyQt6.QtWebChannel import QWebChannel
+    from PyQt6 import sip as _sip
     _HAS_ENGINE = True
-except ImportError:
+    _HAS_SIP    = True
+except ImportError as _ie:
     _HAS_ENGINE = False
-    # Stubs so module-level code still parses
+    _HAS_SIP    = False
+    # Stubs so module-level code still parses without Qt installed
     QObject = object  # type: ignore[assignment,misc]
-    Qt = None  # type: ignore[assignment]
+    Qt      = None    # type: ignore[assignment]
+    _sip    = None    # type: ignore[assignment]
     def pyqtSignal(*a, **k): return None  # type: ignore[misc]
     def pyqtSlot(*a, **k):                # type: ignore[misc]
         def _d(f): return f
@@ -60,13 +77,16 @@ _last_shop: list[dict[str, Any]] = []
 
 
 def _emit(sig_fn, *args) -> None:
-    """Safely call signal.emit() from any thread.
+    """Safely emit a Qt signal from any thread.
 
-    Silently swallows RuntimeError, which occurs when the QObject backing
-    _bridge has been destroyed (app shutting down) while the WS thread
-    or async tasks are still running.
+    Two-layer guard:
+      1. sip.isdeleted(_bridge) — proactively skip if the C++ object is gone
+         (faster than letting Qt raise, and avoids queued-signal delivery errors)
+      2. except RuntimeError — fallback catch for any other deletion race
     """
     try:
+        if _HAS_SIP and _sip.isdeleted(_bridge):  # type: ignore[arg-type]
+            return
         sig_fn(*args)
     except RuntimeError:
         pass
