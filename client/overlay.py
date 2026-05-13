@@ -1,4 +1,4 @@
-"""
+﻿"""
 client/overlay.py — J.A.R.V.I.S. v3.0  WebEngine Hybrid HUD
 
 Full-screen immersive HUD via QWebEngineView + QWebChannel:
@@ -74,22 +74,29 @@ _STAGE_COLORS: dict[str, str] = {
 }
 
 # Last received shop results — checked on clap-wake
-_last_shop: list[dict[str, Any]] = []
+_last_shop:   list[dict[str, Any]] = []
+_bridge_gone: bool = False  # set True by QApplication.aboutToQuit signal
 
 
-def _emit(sig_fn, *args) -> None:
-    """Safely emit a Qt signal from any thread.
+def _emit(sig: str, *args) -> None:
+    """Safely emit a named signal on _bridge from any thread.
 
-    Two-layer guard:
-      1. sip.isdeleted(_bridge) — proactively skip if the C++ object is gone
-         (faster than letting Qt raise, and avoids queued-signal delivery errors)
-      2. except RuntimeError — fallback catch for any other deletion race
+    Accepts the signal attribute NAME as a string (e.g. "logLine") so that
+    Python's argument-evaluation never touches a potentially-deleted QObject
+    before entering this function's try/except block.
+
+    Guard order:
+      1. _bridge_gone flag  — cheapest check; set on app aboutToQuit
+      2. sip.isdeleted()    — C++ object already freed
+      3. except RuntimeError — any remaining race between check and emit
     """
+    if _bridge_gone:
+        return
     try:
         if _HAS_SIP and _sip.isdeleted(_bridge):  # type: ignore[arg-type]
             return
-        sig_fn(*args)
-    except RuntimeError:
+        getattr(_bridge, sig).emit(*args)
+    except (RuntimeError, AttributeError):
         pass
 
 
@@ -249,8 +256,8 @@ class WebHUD:
 # ── Async search helpers ───────────────────────────────────────────────────────
 
 async def _do_web_search(query: str, agent: Any, prefs: Any) -> None:
-    _emit(_bridge.agentFetching.emit, True)
-    _emit(_bridge.logLine.emit, f"SEARCH  '{query[:35]}'…", False)
+    _emit("agentFetching", True)
+    _emit("logLine", f"SEARCH  '{query[:35]}'…", False)
     try:
         results     = await agent.search(query)
         focus_score = _sys_state.get("focus", 50.0)
@@ -263,19 +270,19 @@ async def _do_web_search(query: str, agent: Any, prefs: Any) -> None:
              "rank":    i}
             for i, r in enumerate(ranked)
         ]
-        _emit(_bridge.searchReady.emit, payload)
-        _emit(_bridge.speakStarted.emit,
+        _emit("searchReady", payload)
+        _emit("speakStarted",
               f"{intro}검색 완료 — {len(ranked)}개 결과", "normal", 2200)
-        _emit(_bridge.logLine.emit, f"SEARCH  done  {len(ranked)} results", True)
+        _emit("logLine", f"SEARCH  done  {len(ranked)} results", True)
     except Exception as exc:
         log.error("[Agent] web search failed: %s", exc)
     finally:
-        _emit(_bridge.agentFetching.emit, False)
+        _emit("agentFetching", False)
 
 
 async def _do_shop_search(keyword: str, agent: Any, prefs: Any) -> None:
-    _emit(_bridge.agentFetching.emit, True)
-    _emit(_bridge.logLine.emit, f"SHOP  '{keyword[:35]}'…", False)
+    _emit("agentFetching", True)
+    _emit("logLine", f"SHOP  '{keyword[:35]}'…", False)
     try:
         results     = await agent.shop(keyword)
         focus_score = _sys_state.get("focus", 50.0)
@@ -289,17 +296,17 @@ async def _do_shop_search(keyword: str, agent: Any, prefs: Any) -> None:
              "rank":          i}
             for i, r in enumerate(ranked)
         ]
-        _emit(_bridge.shopReady.emit, payload)
+        _emit("shopReady", payload)
         if ranked:
             top     = ranked[0]
             price_s = top.price_str() if hasattr(top, "price_str") else ""
-            _emit(_bridge.speakStarted.emit,
+            _emit("speakStarted",
                   f"최저가 {price_s} — 박수로 장바구니 담기", "normal", 3000)
-        _emit(_bridge.logLine.emit, f"SHOP  done  {len(ranked)} items", True)
+        _emit("logLine", f"SHOP  done  {len(ranked)} items", True)
     except Exception as exc:
         log.error("[Agent] shop search failed: %s", exc)
     finally:
-        _emit(_bridge.agentFetching.emit, False)
+        _emit("agentFetching", False)
 
 
 # ── WebSocket receive loop ─────────────────────────────────────────────────────
@@ -313,7 +320,7 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
     import websockets  # type: ignore[import-untyped]
 
     focus_engine = FocusScoreEngine(
-        on_ghost_mode=lambda v: _emit(_bridge.ghostToggled.emit, v),
+        on_ghost_mode=lambda v: _emit("ghostToggled", v),
         http_base=http_base,
     )
     predictor = PredictiveAlert(http_base=http_base)
@@ -325,8 +332,8 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
 
     heartbeat = HeartbeatMonitor(
         http_base   = http_base,
-        on_lost     = lambda: _emit(_bridge.heartbeatLost.emit),
-        on_restored = lambda: _emit(_bridge.heartbeatOk.emit),
+        on_lost     = lambda: _emit("heartbeatLost"),
+        on_restored = lambda: _emit("heartbeatOk"),
     )
     asyncio.create_task(heartbeat.run())
 
@@ -336,7 +343,7 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
             async with websockets.connect(ws_url, ping_interval=20) as ws:
                 log.info("[Overlay] WS connected → %s", ws_url)
                 await ws.send(json.dumps({"type": "register", "device": "overlay"}))
-                _emit(_bridge.logLine.emit, f"WS connected  {ws_url}", True)
+                _emit("logLine", f"WS connected  {ws_url}", True)
                 backoff = 2.0
 
                 async for raw in ws:
@@ -357,18 +364,18 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
                             stage = str(msg.get("stage", "GENTLE"))
                             color = str(msg.get("hud_color",
                                                 _STAGE_COLORS.get(stage, "#39FF14")))
-                            _emit(_bridge.angerUpdated.emit, gauge, stage, color)
+                            _emit("angerUpdated", gauge, stage, color)
                             focus_engine.record_gauge(gauge)
                             score = focus_engine.current_score
                             _sys_state["focus"] = score
-                            _emit(_bridge.focusScored.emit, score)
+                            _emit("focusScored", score)
 
                         elif mtype == "study_update":
                             data    = msg.get("data", {})
                             subject = str(data.get("subject", ""))
                             pct     = float(data.get("progress", 0.0))
                             if subject:
-                                _emit(_bridge.logLine.emit,
+                                _emit("logLine",
                                       f"STUDY  {subject}  {pct:.0f}%", False)
 
                         elif mtype == "status":
@@ -376,7 +383,7 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
                             mem  = float(msg.get("mem_percent",  0.0))
                             disk = float(msg.get("disk_percent", 0.0))
                             _sys_state.update(cpu=cpu, mem=mem, disk=disk)
-                            _emit(_bridge.sysUpdated.emit, cpu, mem, disk)
+                            _emit("sysUpdated", cpu, mem, disk)
 
                         elif mtype == "calendar_data":
                             predictor.update_events(msg.get("events", []))
@@ -390,7 +397,7 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
                         elif mtype == "stealth_update":
                             muted  = bool(msg.get("muted", False))
                             reason = str(msg.get("reason", ""))
-                            _emit(_bridge.logLine.emit,
+                            _emit("logLine",
                                   f"STEALTH  {'ON' if muted else 'OFF'}  {reason}",
                                   False)
 
@@ -398,7 +405,7 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
                             text = str(msg.get("message", msg.get("response", "")))
                             if text:
                                 duration = max(2200, len(text) * 55)
-                                _emit(_bridge.speakStarted.emit,
+                                _emit("speakStarted",
                                       text, "normal", duration)
 
                         elif mtype == "proactive_alert":
@@ -410,9 +417,9 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
                                 else "normal"
                             )
                             duration = max(3000, len(text) * 60)
-                            _emit(_bridge.speakStarted.emit, text, imp, duration)
-                            _emit(_bridge.alertFlashed.emit, text)
-                            _emit(_bridge.logLine.emit, f"ALERT  {text[:60]}", True)
+                            _emit("speakStarted", text, imp, duration)
+                            _emit("alertFlashed", text)
+                            _emit("logLine", f"ALERT  {text[:60]}", True)
 
                         elif mtype == "search_request":
                             query = str(msg.get("query", "")).strip()
@@ -439,12 +446,12 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
                                 log.debug("[Agent] feedback: %s", fb_exc)
 
                         elif mtype == "deploy_failed":
-                            _emit(_bridge.logLine.emit, "DEPLOY FAILED ⚠", True)
-                            _emit(_bridge.errorFlash.emit,
+                            _emit("logLine", "DEPLOY FAILED ⚠", True)
+                            _emit("errorFlash",
                                   "ERROR", "Deploy pipeline failed")
 
                         elif mtype == "system_update":
-                            _emit(_bridge.logLine.emit,
+                            _emit("logLine",
                                   "DEPLOY  push complete ✓", True)
 
                     except RuntimeError:
@@ -454,7 +461,7 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
         except Exception as exc:
             log.warning(
                 "[Overlay] WS error: %s — retry in %.0fs", exc, backoff)
-            _emit(_bridge.logLine.emit, f"WS reconnect in {backoff:.0f}s", False)
+            _emit("logLine", f"WS reconnect in {backoff:.0f}s", False)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60.0)
 
@@ -524,6 +531,12 @@ class JarvisOverlay:
             hud = WebHUD(audio_response=audio)
             log.info("[Overlay] Awakening sequence start.")
             hud.awaken()
+
+        def _on_quit() -> None:
+            global _bridge_gone
+            _bridge_gone = True
+
+        app.aboutToQuit.connect(_on_quit)
 
         QTimer.singleShot(0, _init_hud)
         sys.exit(app.exec())
