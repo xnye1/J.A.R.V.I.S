@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import struct
 import subprocess
 import wave
@@ -71,7 +72,21 @@ class AudioResponse:
             except Exception as exc:
                 log.warning("[Audio] simpleaudio play failed: %s", exc)
 
-        # Subprocess fallback — try common audio players in priority order
+        # Windows fallback — winsound is stdlib, always available on Windows
+        if os.name == "nt" and self._path.exists():
+            try:
+                import winsound
+                import threading
+                threading.Thread(
+                    target=winsound.PlaySound,
+                    args=(str(self._path), winsound.SND_FILENAME),
+                    daemon=True,
+                ).start()
+                return
+            except Exception as exc:
+                log.warning("[Audio] winsound play failed: %s", exc)
+
+        # Unix subprocess fallback — try common audio players in priority order
         if self._path.exists():
             for player in ("aplay", "paplay", "afplay", "play"):
                 try:
