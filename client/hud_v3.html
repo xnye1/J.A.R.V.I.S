@@ -217,12 +217,46 @@ html,body{width:100%;height:100%;background:#010810;color:var(--txt);
 /* static mode */
 body.static-mode .aring,body.static-mode .c-glow,body.static-mode .c-hex,
 body.static-mode .led,body.static-mode .wkdot{animation:none!important}
+
+/* ── Protocol 1: offline banner ── */
+#offline-banner{position:fixed;top:0;left:0;right:0;z-index:500;
+  background:rgba(239,68,68,.10);border-bottom:1px solid rgba(239,68,68,.38);
+  color:#ef4444;font-family:'Share Tech Mono',monospace;font-size:.6rem;
+  letter-spacing:.22em;text-align:center;padding:5px 0;
+  display:none;pointer-events:none;text-shadow:0 0 8px rgba(239,68,68,.35);
+  animation:oflash 2.5s ease-in-out infinite}
+#offline-banner.show{display:block}
+@keyframes oflash{0%,100%{opacity:1}50%{opacity:.62}}
+
+/* ── Protocol 2: GPU compositing hints ── */
+.aring,#waveform,#radar-canvas{will-change:transform}
+#casc-l,#casc-r{will-change:contents}
+
+/* ── Protocol 3: panel hover glow ── */
+.panel{transition:border-color .25s,box-shadow .25s}
+.panel:hover{border-color:rgba(0,212,255,.50);box-shadow:0 0 16px rgba(0,212,255,.09)}
+
+/* ── Protocol 4: command bar ── */
+#cmd-bar{display:flex;gap:5px;padding:6px 10px;
+  border-top:1px solid rgba(0,212,255,.10);flex-shrink:0;z-index:2}
+#cmd-input{flex:1;background:rgba(0,8,20,.85);
+  border:1px solid rgba(0,212,255,.20);border-radius:4px;
+  color:var(--c);font-family:'Share Tech Mono',monospace;font-size:.66rem;
+  padding:4px 9px;letter-spacing:.05em;outline:none}
+#cmd-input::placeholder{color:rgba(0,212,255,.22);letter-spacing:.1em}
+#cmd-input:focus{border-color:rgba(0,212,255,.50);box-shadow:0 0 8px rgba(0,212,255,.10)}
+#cmd-send{background:rgba(0,212,255,.07);border:1px solid rgba(0,212,255,.28);
+  border-radius:4px;color:var(--c);cursor:pointer;font-size:.68rem;
+  padding:4px 11px;transition:background .15s,box-shadow .15s;
+  font-family:'Share Tech Mono',monospace;letter-spacing:.05em}
+#cmd-send:hover{background:rgba(0,212,255,.17);box-shadow:0 0 8px rgba(0,212,255,.14)}
 </style>
 </head>
 <body>
 
 <div id="flash"></div>
 <div id="errd"></div>
+<div id="offline-banner">⚡ OFFLINE MODE — LOCAL DIAGNOSTICS ONLY</div>
 <canvas id="rpl"></canvas>
 
 <div id="boot">
@@ -324,6 +358,10 @@ body.static-mode .led,body.static-mode .wkdot{animation:none!important}
   <div id="feed-wrap">
     <div id="feed"></div>
   </div>
+  <div id="cmd-bar">
+    <input id="cmd-input" type="text" placeholder="COMMAND INPUT..." autocomplete="off" spellcheck="false">
+    <button id="cmd-send">▶ SEND</button>
+  </div>
 </div>
 
 <!-- RIGHT -->
@@ -377,6 +415,7 @@ body.static-mode .led,body.static-mode .wkdot{animation:none!important}
   </div>
   <div class="bchip">STAGE<strong id="b-stage" style="font-size:.6rem">GENTLE</strong></div>
   <div class="bchip">WAKE<strong id="b-wake">0</strong></div>
+  <div class="bchip" id="ping-chip">PING<strong id="b-ping" style="color:var(--dim)">--ms</strong></div>
   <div class="bchip">BUILD<strong style="font-size:.6rem;color:var(--dim)">v3.1</strong></div>
 </div>
 
@@ -770,6 +809,21 @@ function initChannel(){
     jarvis.heartbeatLost.connect(()=>{setSrvLed(false);addEvt('Server connection lost','al');});
     jarvis.heartbeatOk.connect(()=>{setSrvLed(true);addEvt('Server connection restored','hi');});
 
+    jarvis.offlineMode.connect(offline=>{
+      document.getElementById('offline-banner').classList.toggle('show',offline);
+      setSrvLed(!offline);
+      const el=document.getElementById('b-ping');
+      if(el&&offline){el.textContent='--ms';el.style.color='var(--dim)';}
+      addEvt(offline?'OFFLINE MODE — local diagnostics':'Server link restored',offline?'al':'hi');
+    });
+
+    jarvis.pingMs.connect(ms=>{
+      const el=document.getElementById('b-ping');
+      if(!el)return;
+      el.textContent=ms+'ms';
+      el.style.color=ms<80?'var(--grn)':ms<200?'var(--ylw)':'var(--red)';
+    });
+
     setSrvLed(true);
     jarvis.hud_ready();
     addMsg('JARVIS','Bridge display online. Neural link established, Sir.','j');
@@ -777,6 +831,22 @@ function initChannel(){
     arcReact('BRIDGE ONLINE',2000);
   });
 }
+
+// ── COMMAND BAR ──
+function sendCmd(){
+  const inp=document.getElementById('cmd-input');
+  const txt=(inp.value||'').trim();
+  if(!txt)return;
+  addEvt('[USER]: '+txt,'hi');
+  addMsg('USER',txt,'a');
+  if(jarvis)jarvis.send_command(txt);
+  inp.value='';
+  arcReact('PROCESSING',4000);
+}
+document.getElementById('cmd-input').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();sendCmd();}
+});
+document.getElementById('cmd-send').addEventListener('click',sendCmd);
 
 // ESC → ghost mode
 let ghostOn=false;

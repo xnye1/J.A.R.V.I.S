@@ -49,6 +49,7 @@ import json
 import logging
 import pathlib
 import signal as _signal
+import time
 import threading
 import webbrowser
 from typing import Any
@@ -142,6 +143,8 @@ class JarvisDataBridge(QObject):
     errorFlash     = pyqtSignal(str, str)              # level, message
     heartbeatLost  = pyqtSignal()
     heartbeatOk    = pyqtSignal()
+    offlineMode    = pyqtSignal(bool)
+    pingMs         = pyqtSignal(int)
 
     # ── JS → Python ───────────────────────────────────────────────
 
@@ -170,11 +173,24 @@ class JarvisDataBridge(QObject):
         except Exception:
             pass  # non-critical
 
+    @pyqtSlot(str)
+    def send_command(self, text: str) -> None:
+        """JS command bar → POST /chat on the asyncio thread."""
+        text = text.strip()
+        if not text:
+            return
+        _emit("logLine", f"USER  {text[:60]}", True)
+        if _ws_loop is not None:
+            asyncio.run_coroutine_threadsafe(_post_chat(text), _ws_loop)
+
 
 # _bridge is initialized in JarvisOverlay.run() AFTER QApplication is created.
 # Creating a QObject before QApplication exists is undefined behaviour in Qt.
-_bridge: JarvisDataBridge | None = None
-_sys_state: dict[str, float] = {"cpu": 0.0, "mem": 0.0, "disk": 0.0, "focus": 50.0}
+_bridge:        JarvisDataBridge | None = None
+_sys_state:     dict[str, float] = {"cpu": 0.0, "mem": 0.0, "disk": 0.0, "focus": 50.0}
+_ws_loop:       "asyncio.AbstractEventLoop | None" = None
+_http_base_url: str  = "http://158.180.78.104:8000"
+_ping_state:    dict = {"t0": 0.0, "pending": False}
 
 
 # ── WebHUD ─────────────────────────────────────────────────────────────────────
@@ -336,6 +352,63 @@ async def _do_shop_search(keyword: str, agent: Any, prefs: Any) -> None:
         _emit("agentFetching", False)
 
 
+# ── Async helpers ─────────────────────────────────────────────────────────────
+
+async def _post_chat(text: str) -> None:
+    """POST a command to /chat using stdlib only (no aiohttp dep)."""
+    import urllib.request
+    import urllib.error
+    payload = json.dumps({"message": text}).encode()
+    def _do() -> None:
+        req = urllib.request.Request(
+            f"{_http_base_url}/chat",
+            data    = payload,
+            headers = {"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=8):
+            pass
+    try:
+        await asyncio.get_event_loop().run_in_executor(None, _do)
+    except Exception as exc:
+        log.warning("[Overlay] POST /chat failed: %s", exc)
+        _emit("logLine", "CHAT  server unreachable", False)
+
+
+async def _local_poll_loop() -> None:
+    """Emit local psutil telemetry while the Oracle server is unreachable."""
+    try:
+        import psutil
+    except ImportError:
+        _emit("logLine", "OFFLINE  psutil unavailable", False)
+        return
+    disk_path = "C:\\" if os.name == "nt" else "/"
+    while True:
+        try:
+            cpu  = psutil.cpu_percent(interval=None)
+            mem  = psutil.virtual_memory().percent
+            try:
+                disk = psutil.disk_usage(disk_path).percent
+            except Exception:
+                disk = 0.0
+            _sys_state.update(cpu=cpu, mem=mem, disk=disk)
+            _emit("sysUpdated", cpu, mem, disk)
+        except Exception:
+            pass
+        await asyncio.sleep(5)
+
+
+async def _ping_loop(ws: Any) -> None:
+    """Send application-level pings every 10 s; latency read from pong handler."""
+    while True:
+        await asyncio.sleep(10)
+        try:
+            _ping_state["t0"]      = time.monotonic()
+            _ping_state["pending"] = True
+            await ws.send(json.dumps({"type": "ping"}))
+        except Exception:
+            break
+
+
 # ── WebSocket receive loop ─────────────────────────────────────────────────────
 
 async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
@@ -364,128 +437,146 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
     )
     asyncio.create_task(heartbeat.run())
 
+    offline_poll_task: "asyncio.Task | None" = None
     backoff = 2.0
     while True:
         try:
             async with websockets.connect(ws_url, ping_interval=20) as ws:
+                # ── Online: cancel local poller, clear offline banner ──
+                if offline_poll_task is not None:
+                    offline_poll_task.cancel()
+                    offline_poll_task = None
+                _emit("offlineMode", False)
+
                 log.info("[Overlay] WS connected → %s", ws_url)
                 await ws.send(json.dumps({"type": "register", "device": "overlay"}))
                 _emit("logLine", f"WS connected  {ws_url}", True)
                 backoff = 2.0
 
-                async for raw in ws:
-                    try:
-                        msg = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
+                ping_task = asyncio.create_task(_ping_loop(ws))
+                try:
+                    async for raw in ws:
+                        try:
+                            msg = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
 
-                    mtype = msg.get("type", "")
+                        mtype = msg.get("type", "")
 
-                    # All emit() calls here run on the asyncio thread and are
-                    # dispatched to the Qt main thread via QueuedConnection.
-                    # RuntimeError means the bridge QObject was destroyed
-                    # (app shutting down) — silently drop the message.
-                    try:
-                        if mtype == "anger_update":
-                            gauge = float(msg.get("gauge", 0.0))
-                            stage = str(msg.get("stage", "GENTLE"))
-                            color = str(msg.get("hud_color",
-                                                _STAGE_COLORS.get(stage, "#39FF14")))
-                            _emit("angerUpdated", gauge, stage, color)
-                            focus_engine.record_gauge(gauge)
-                            score = focus_engine.current_score
-                            _sys_state["focus"] = score
-                            _emit("focusScored", score)
+                        # All emit() calls dispatch to Qt main thread via QueuedConnection.
+                        # RuntimeError = bridge QObject destroyed (app shutting down).
+                        try:
+                            if mtype == "pong":
+                                if _ping_state["pending"]:
+                                    ms = int((time.monotonic() - _ping_state["t0"]) * 1000)
+                                    _ping_state["pending"] = False
+                                    _emit("pingMs", ms)
 
-                        elif mtype == "study_update":
-                            data    = msg.get("data", {})
-                            subject = str(data.get("subject", ""))
-                            pct     = float(data.get("progress", 0.0))
-                            if subject:
+                            elif mtype == "anger_update":
+                                gauge = float(msg.get("gauge", 0.0))
+                                stage = str(msg.get("stage", "GENTLE"))
+                                color = str(msg.get("hud_color",
+                                                    _STAGE_COLORS.get(stage, "#39FF14")))
+                                _emit("angerUpdated", gauge, stage, color)
+                                focus_engine.record_gauge(gauge)
+                                score = focus_engine.current_score
+                                _sys_state["focus"] = score
+                                _emit("focusScored", score)
+
+                            elif mtype == "study_update":
+                                data    = msg.get("data", {})
+                                subject = str(data.get("subject", ""))
+                                pct     = float(data.get("progress", 0.0))
+                                if subject:
+                                    _emit("logLine",
+                                          f"STUDY  {subject}  {pct:.0f}%", False)
+
+                            elif mtype == "status":
+                                cpu  = float(msg.get("cpu_percent",  0.0))
+                                mem  = float(msg.get("mem_percent",  0.0))
+                                disk = float(msg.get("disk_percent", 0.0))
+                                _sys_state.update(cpu=cpu, mem=mem, disk=disk)
+                                _emit("sysUpdated", cpu, mem, disk)
+
+                            elif mtype == "calendar_data":
+                                predictor.update_events(msg.get("events", []))
+
+                            elif mtype == "location_update":
+                                lat = float(msg.get("lat", 0.0))
+                                lon = float(msg.get("lon", 0.0))
+                                if lat or lon:
+                                    predictor.update_location(lat, lon)
+
+                            elif mtype == "stealth_update":
+                                muted  = bool(msg.get("muted", False))
+                                reason = str(msg.get("reason", ""))
                                 _emit("logLine",
-                                      f"STUDY  {subject}  {pct:.0f}%", False)
+                                      f"STEALTH  {'ON' if muted else 'OFF'}  {reason}",
+                                      False)
 
-                        elif mtype == "status":
-                            cpu  = float(msg.get("cpu_percent",  0.0))
-                            mem  = float(msg.get("mem_percent",  0.0))
-                            disk = float(msg.get("disk_percent", 0.0))
-                            _sys_state.update(cpu=cpu, mem=mem, disk=disk)
-                            _emit("sysUpdated", cpu, mem, disk)
+                            elif mtype == "chat_response":
+                                text = str(msg.get("message", msg.get("response", "")))
+                                if text:
+                                    duration = max(2200, len(text) * 55)
+                                    _emit("speakStarted", text, "normal", duration)
 
-                        elif mtype == "calendar_data":
-                            predictor.update_events(msg.get("events", []))
-
-                        elif mtype == "location_update":
-                            lat = float(msg.get("lat", 0.0))
-                            lon = float(msg.get("lon", 0.0))
-                            if lat or lon:
-                                predictor.update_location(lat, lon)
-
-                        elif mtype == "stealth_update":
-                            muted  = bool(msg.get("muted", False))
-                            reason = str(msg.get("reason", ""))
-                            _emit("logLine",
-                                  f"STEALTH  {'ON' if muted else 'OFF'}  {reason}",
-                                  False)
-
-                        elif mtype == "chat_response":
-                            text = str(msg.get("message", msg.get("response", "")))
-                            if text:
-                                duration = max(2200, len(text) * 55)
-                                _emit("speakStarted",
-                                      text, "normal", duration)
-
-                        elif mtype == "proactive_alert":
-                            text     = str(msg.get("message", ""))
-                            severity = str(msg.get("severity", "NORMAL")).upper()
-                            imp      = (
-                                "critical" if severity == "CRITICAL"
-                                else "warning" if severity in ("HIGH", "WARNING")
-                                else "normal"
-                            )
-                            duration = max(3000, len(text) * 60)
-                            _emit("speakStarted", text, imp, duration)
-                            _emit("alertFlashed", text)
-                            _emit("logLine", f"ALERT  {text[:60]}", True)
-
-                        elif mtype == "search_request":
-                            query = str(msg.get("query", "")).strip()
-                            if query:
-                                asyncio.create_task(
-                                    _do_web_search(query, search_agent, prefs))
-
-                        elif mtype == "shop_request":
-                            keyword = str(
-                                msg.get("keyword", msg.get("query", ""))).strip()
-                            if keyword:
-                                asyncio.create_task(
-                                    _do_shop_search(keyword, search_agent, prefs))
-
-                        elif mtype == "feedback":
-                            try:
-                                prefs.record_feedback(
-                                    query         = str(msg.get("query",        "")),
-                                    result_title  = str(msg.get("result_title", "")),
-                                    result_domain = str(msg.get("domain",       "")),
-                                    positive      = bool(msg.get("positive",    True)),
+                            elif mtype == "proactive_alert":
+                                text     = str(msg.get("message", ""))
+                                severity = str(msg.get("severity", "NORMAL")).upper()
+                                imp = (
+                                    "critical" if severity == "CRITICAL"
+                                    else "warning" if severity in ("HIGH", "WARNING")
+                                    else "normal"
                                 )
-                            except Exception as fb_exc:
-                                log.debug("[Agent] feedback: %s", fb_exc)
+                                duration = max(3000, len(text) * 60)
+                                _emit("speakStarted", text, imp, duration)
+                                _emit("alertFlashed", text)
+                                _emit("logLine", f"ALERT  {text[:60]}", True)
 
-                        elif mtype == "deploy_failed":
-                            _emit("logLine", "DEPLOY FAILED ⚠", True)
-                            _emit("errorFlash",
-                                  "ERROR", "Deploy pipeline failed")
+                            elif mtype == "search_request":
+                                query = str(msg.get("query", "")).strip()
+                                if query:
+                                    asyncio.create_task(
+                                        _do_web_search(query, search_agent, prefs))
 
-                        elif mtype == "system_update":
-                            _emit("logLine",
-                                  "DEPLOY  push complete ✓", True)
+                            elif mtype == "shop_request":
+                                keyword = str(
+                                    msg.get("keyword", msg.get("query", ""))).strip()
+                                if keyword:
+                                    asyncio.create_task(
+                                        _do_shop_search(keyword, search_agent, prefs))
 
-                    except RuntimeError:
-                        log.debug(
-                            "[Overlay] Bridge destroyed — dropped msg type=%r", mtype)
+                            elif mtype == "feedback":
+                                try:
+                                    prefs.record_feedback(
+                                        query         = str(msg.get("query",        "")),
+                                        result_title  = str(msg.get("result_title", "")),
+                                        result_domain = str(msg.get("domain",       "")),
+                                        positive      = bool(msg.get("positive",    True)),
+                                    )
+                                except Exception as fb_exc:
+                                    log.debug("[Agent] feedback: %s", fb_exc)
+
+                            elif mtype == "deploy_failed":
+                                _emit("logLine", "DEPLOY FAILED ⚠", True)
+                                _emit("errorFlash", "ERROR", "Deploy pipeline failed")
+
+                            elif mtype == "system_update":
+                                _emit("logLine", "DEPLOY  push complete ✓", True)
+
+                        except RuntimeError:
+                            log.debug(
+                                "[Overlay] Bridge destroyed — dropped msg type=%r", mtype)
+                finally:
+                    ping_task.cancel()
 
         except Exception as exc:
+            # ── Offline: start local poller if not already running ──
+            if offline_poll_task is None or offline_poll_task.done():
+                _emit("offlineMode", True)
+                _emit("logLine", "OFFLINE MODE — local diagnostics only", True)
+                offline_poll_task = asyncio.create_task(_local_poll_loop())
+
             log.warning(
                 "[Overlay] WS error: %s — retry in %.0fs", exc, backoff)
             _emit("logLine", f"WS reconnect in {backoff:.0f}s", False)
@@ -494,8 +585,11 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
 
 
 def _run_ws_thread(ws_url: str, http_base: str) -> None:
+    global _ws_loop, _http_base_url
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    _ws_loop       = loop
+    _http_base_url = http_base
     loop.run_until_complete(_ws_receive_loop(ws_url, http_base))
 
 
