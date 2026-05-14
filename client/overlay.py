@@ -146,6 +146,7 @@ class JarvisDataBridge(QObject):
     offlineMode    = pyqtSignal(bool)
     pingMs         = pyqtSignal(int)
     bootDuration   = pyqtSignal(int)     # boot.wav duration in ms → JS sync
+    _ttsReady      = pyqtSignal(str)     # internal: temp MP3 path → WebHUD player
 
     # ── JS → Python ───────────────────────────────────────────────
 
@@ -309,6 +310,13 @@ class WebHUD:
             self._view.load(QUrl.fromLocalFile(str(_HUD_PATH.resolve())))
             log.info("[WebHUD] Loaded %s", _HUD_PATH)
 
+        # TTS player state (instance-level keeps GC refs alive)
+        self._tts_player    = None
+        self._tts_audio_out = None
+
+        # Route TTS file-ready signal → Qt audio playback
+        _bridge._ttsReady.connect(self._on_tts_ready)
+
         # Track shop results for clap-wake confirm
         _bridge.shopReady.connect(self._on_shop_ready)
 
@@ -349,6 +357,50 @@ class WebHUD:
         _bridge.speakStarted.emit("Yes, Sir.", "critical", 1800)
         _bridge.flickering.emit(True)
         QTimer.singleShot(1800, lambda: _bridge.flickering.emit(False))
+
+    def _on_tts_ready(self, path: str) -> None:
+        """Qt main thread: play synthesized MP3, emit speakFinished when done."""
+        if not _HAS_ENGINE:
+            _emit("speakFinished")
+            return
+        try:
+            from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+
+            # Stop any previous TTS audio
+            if self._tts_player is not None:
+                try:
+                    self._tts_player.stop()
+                except Exception:
+                    pass
+
+            if self._tts_audio_out is None:
+                self._tts_audio_out = QAudioOutput()
+                self._tts_audio_out.setVolume(0.90)
+
+            player = QMediaPlayer()
+            player.setAudioOutput(self._tts_audio_out)
+            player.setSource(QUrl.fromLocalFile(path))
+            self._tts_player = player  # keep alive
+
+            def _on_state(state: "QMediaPlayer.PlaybackState") -> None:
+                if state == QMediaPlayer.PlaybackState.StoppedState:
+                    _emit("speakFinished")
+                    try:
+                        pathlib.Path(path).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+            player.playbackStateChanged.connect(_on_state)
+            player.play()
+            log.debug("[TTS] playback started: %s", path)
+
+        except Exception as exc:
+            log.warning("[TTS] Qt audio play failed: %s", exc)
+            _emit("speakFinished")
+            try:
+                pathlib.Path(path).unlink(missing_ok=True)
+            except Exception:
+                pass
 
     def awaken(self) -> None:
         """Cover the full screen (including taskbar) and start boot."""
@@ -471,6 +523,48 @@ async def _ping_loop(ws: Any) -> None:
             break
 
 
+# ── TTS helper ─────────────────────────────────────────────────────────────────
+
+async def _speak_text(text: str) -> None:
+    """Synthesize TTS audio and hand the MP3 file off to Qt for playback.
+
+    Runs on the asyncio thread.  Audio is played on the Qt main thread via
+    the _ttsReady signal → WebHUD._on_tts_ready slot.
+    speakFinished is always emitted (even on failure) so HUD resets cleanly.
+    """
+    import tempfile
+    from client.tts import synthesize, estimate_ms  # type: ignore[import-untyped]
+
+    # Trim to a sensible length to avoid excessive synthesis cost/latency
+    trimmed = text.strip()[:800]
+    if not trimmed:
+        _emit("speakFinished")
+        return
+
+    log.debug("[TTS] synthesizing  %d chars", len(trimmed))
+    try:
+        mp3 = await synthesize(trimmed)
+    except Exception as exc:
+        log.warning("[TTS] synthesis error: %s", exc)
+        mp3 = None
+
+    if not mp3:
+        _emit("speakFinished")
+        return
+
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            f.write(mp3)
+            tmp_path = f.name
+    except Exception as exc:
+        log.warning("[TTS] temp file write failed: %s", exc)
+        _emit("speakFinished")
+        return
+
+    # Hand off to Qt main thread for playback
+    _emit("_ttsReady", tmp_path)
+
+
 # ── WebSocket receive loop ─────────────────────────────────────────────────────
 
 async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
@@ -579,8 +673,9 @@ async def _ws_receive_loop(ws_url: str, http_base: str) -> None:
                             elif mtype == "chat_response":
                                 text = str(msg.get("message", msg.get("response", "")))
                                 if text:
-                                    duration = max(2200, len(text) * 55)
-                                    _emit("speakStarted", text, "normal", duration)
+                                    from client.tts import estimate_ms  # type: ignore
+                                    _emit("speakStarted", text, "normal", estimate_ms(text))
+                                    asyncio.create_task(_speak_text(text))
 
                             elif mtype == "proactive_alert":
                                 text     = str(msg.get("message", ""))

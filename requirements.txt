@@ -22,5 +22,8 @@ redis==5.0.8
 sqlalchemy==2.0.30
 tzdata                 # IANA timezone data for zoneinfo (required on slim Docker images)
 
+# ── TTS ──────────────────────────────────────────────────────
+gtts>=2.5.0            # gTTS fallback (ElevenLabs preferred via ELEVENLABS_API_KEY)
+
 # ── [선택] Google Gemini — 추후 활성화 시 주석 해제 ───────────
 # google-generativeai==0.7.2

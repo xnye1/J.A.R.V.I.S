@@ -337,7 +337,7 @@ body.static-mode .led,body.static-mode .wkdot{animation:none!important}
 
   <div id="arc-wrap">
     <div class="albl t">ARC REACTOR · LOCAL OVERLAY</div>
-    <div class="albl b" id="arc-albl-b">STANDBY</div>
+    <div class="albl b" id="arc-albl-b">LISTENING</div>
     <div class="albl l">STBL</div>
     <div class="albl r">SYNC</div>
     <div class="aring aring-1"></div>
@@ -351,7 +351,7 @@ body.static-mode .led,body.static-mode .wkdot{animation:none!important}
       <div class="c-hex"></div>
     </div>
   </div>
-  <div id="arc-state">STANDBY</div>
+  <div id="arc-state">LISTENING</div>
 
   <canvas id="waveform"></canvas>
 
@@ -501,11 +501,16 @@ const arcWrap=document.getElementById('arc-wrap');
 const arcState=document.getElementById('arc-state');
 const arcAlblB=document.getElementById('arc-albl-b');
 let arcTimer;
+function setArcIdle(){
+  arcWrap.classList.remove('react');
+  arcState.textContent='LISTENING';
+  arcAlblB.textContent='LISTENING';
+}
 function arcReact(label,ms=3000){
   label=label||'PROCESSING';
   arcWrap.classList.add('react');arcState.textContent=label;arcAlblB.textContent=label;
   clearTimeout(arcTimer);
-  arcTimer=setTimeout(()=>{arcWrap.classList.remove('react');arcState.textContent='STANDBY';arcAlblB.textContent='STANDBY';},ms);
+  arcTimer=setTimeout(setArcIdle,ms);
 }
 
 // ── FLASH / ERROR ──
@@ -656,19 +661,45 @@ function updateFury(gauge,stage,color){
 // ── WAVEFORM ──
 const wc=document.getElementById('waveform');
 const wctx=wc.getContext('2d');
-let wt=0;
+let wt=0, _wAmp=1.0, _wTarget=1.0;
+
+function setWaveSpeaking(on){_wTarget=on?3.2:1.0;}
+
 function drawWave(){
+  // Smooth lerp → target amplitude
+  _wAmp+=(_wTarget-_wAmp)*0.10;
+
   const nw=wc.offsetWidth;
   if(wc.width!==nw){wc.width=nw;wc.height=38;}
   wctx.clearRect(0,0,wc.width,38);
+
   const w=wc.width,mid=19;
-  wctx.beginPath();wctx.strokeStyle='#00d4ff';wctx.lineWidth=1.2;
+  const spk=_wAmp>1.5;
+  const col=spk?'#f0a500':'#00d4ff';
+  wctx.strokeStyle=col;wctx.lineWidth=spk?1.8:1.1;
+
+  // Layer 1 — main wave
+  wctx.beginPath();
   for(let x=0;x<w;x++){
-    const amp=Math.sin(wt*.03+x*.4)*6+Math.sin(wt*.07+x*.15)*4+Math.sin(wt*.02+x*.8)*3;
-    const y=mid+amp*Math.sin(x*.055+wt*.045);
+    const a=_wAmp;
+    const y=mid+(Math.sin(wt*.03+x*.4)*6*a+Math.sin(wt*.07+x*.15)*4*a+Math.sin(wt*.02+x*.8)*3*a)*Math.sin(x*.055+wt*.045);
     x===0?wctx.moveTo(x,y):wctx.lineTo(x,y);
   }
-  wctx.stroke();wt+=2;
+  wctx.stroke();
+
+  // Layer 2 — harmonic overtone (speaking only)
+  if(spk){
+    wctx.beginPath();
+    wctx.strokeStyle=spk?'rgba(240,165,0,.30)':'rgba(0,212,255,.18)';
+    wctx.lineWidth=0.8;
+    for(let x=0;x<w;x++){
+      const y=mid+(Math.sin(wt*.05+x*.62+1.2)*4*_wAmp+Math.sin(wt*.11+x*.26)*2.5*_wAmp);
+      x===0?wctx.moveTo(x,y):wctx.lineTo(x,y);
+    }
+    wctx.stroke();
+  }
+
+  wt+=spk?5:2;
 }
 
 // ── RADAR ──
@@ -789,11 +820,18 @@ function initChannel(){
       showBubble(text,imp,ms);
       addMsg('JARVIS',text,'j');
       arcReact('SPEAKING',ms);
+      setWaveSpeaking(true);
       document.querySelectorAll('.panel').forEach(p=>p.classList.add('flick'));
-      setTimeout(()=>document.querySelectorAll('.panel').forEach(p=>p.classList.remove('flick')),ms);
     });
 
-    jarvis.speakFinished.connect(()=>document.querySelectorAll('.panel').forEach(p=>p.classList.remove('flick')));
+    jarvis.speakFinished.connect(()=>{
+      // Clear bubble immediately (audio ended — don't wait for estimate timeout)
+      clearTimeout(bblT);bbl.className='';
+      setWaveSpeaking(false);
+      document.querySelectorAll('.panel').forEach(p=>p.classList.remove('flick'));
+      clearTimeout(arcTimer);setArcIdle();
+      addEvt('LISTENING…','hi');
+    });
 
     jarvis.alertFlashed.connect(()=>{flash();addRipple('#fbbf24');addRipple('#fbbf24',210);});
 
