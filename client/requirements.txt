@@ -22,7 +22,7 @@ numpy>=1.24.0           # RMS computation + OWW frame buffering
 
 # ── Audio response ───────────────────────────────────────────────────────────
 simpleaudio>=1.0.4      # zero-latency pre-loaded WAV playback (<5 ms)
-pyttsx3>=2.90           # offline TTS — generates yes_sir.wav at first run
+pyttsx3>=2.99           # offline TTS — generates yes_sir.wav at first run (needs pywin32 on Windows)
 
 # ── Wake word model (optional — install separately for "자비스" detection) ──
 # openwakeword>=0.5.0   # pip install openwakeword  (downloads ONNX models on first run)
