@@ -174,41 +174,8 @@ body.static-mode #casc-l,body.static-mode #casc-r{opacity:0}
 
 /* Arc reactor */
 #arc-wrap{position:relative;flex-shrink:0;width:224px;height:224px;
-  display:flex;align-items:center;justify-content:center;z-index:2}
-.aring{position:absolute;border-radius:50%;border:1px solid var(--bdr)}
-.aring-1{width:224px;height:224px;border-color:rgba(0,212,255,.11);animation:cw 40s linear infinite}
-.aring-2{width:191px;height:191px;border-color:rgba(0,212,255,.17);animation:ccw 28s linear infinite}
-.aring-3{width:158px;height:158px;border-color:rgba(0,212,255,.27);animation:cw 18s linear infinite}
-.aring-4{width:128px;height:128px;border-color:rgba(0,212,255,.4);animation:ccw 11s linear infinite}
-.aring-5{width:100px;height:100px;border-color:var(--bdrb);animation:cw 7s linear infinite}
-@keyframes cw{to{transform:rotate(360deg)}}
-@keyframes ccw{to{transform:rotate(-360deg)}}
-.aring-1::after,.aring-3::after,.aring-5::after{content:'';position:absolute;top:-3px;left:50%;
-  transform:translateX(-50%);width:5px;height:5px;border-radius:50%;background:var(--c);box-shadow:0 0 8px var(--c)}
-.aring-2::before{content:'';position:absolute;right:-3px;top:50%;transform:translateY(-50%);
-  width:5px;height:5px;border-radius:50%;background:var(--gold);box-shadow:0 0 8px var(--gold)}
-.aring-4::before{content:'';position:absolute;bottom:-3px;left:50%;transform:translateX(-50%);
-  width:4px;height:4px;border-radius:50%;background:var(--red);box-shadow:0 0 6px var(--red);animation:blink 1.2s infinite}
-
-#arc-core{position:relative;z-index:10;width:84px;height:84px;border-radius:50%;
-  display:flex;align-items:center;justify-content:center;cursor:pointer}
-.c-glow{position:absolute;inset:0;border-radius:50%;
-  background:radial-gradient(circle,rgba(0,212,255,.36) 0%,rgba(0,212,255,.07) 50%,transparent 70%);
-  animation:cbreath 2.5s ease-in-out infinite}
-@keyframes cbreath{0%,100%{transform:scale(1);opacity:.8}50%{transform:scale(1.18);opacity:1}}
-.c-ring{position:absolute;width:100%;height:100%;border-radius:50%;border:2px solid var(--c);
-  box-shadow:0 0 18px var(--c),inset 0 0 16px rgba(0,212,255,.14)}
-.c-hex{position:relative;z-index:1;width:42px;height:42px;
-  background:radial-gradient(circle,rgba(0,212,255,.88),rgba(0,100,160,.44));
-  clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
-  box-shadow:0 0 22px var(--c);animation:hspin 6s linear infinite}
-@keyframes hspin{to{transform:rotate(360deg)}}
-
-#arc-wrap.react .c-glow{animation:cbreath-f .7s ease-in-out infinite}
-#arc-wrap.react .aring-3{animation-duration:4s!important}
-#arc-wrap.react .aring-4{animation-duration:2.5s!important}
-#arc-wrap.react .c-ring{box-shadow:0 0 38px var(--c),0 0 76px rgba(0,212,255,.32),inset 0 0 28px rgba(0,212,255,.22)}
-@keyframes cbreath-f{0%,100%{transform:scale(1);opacity:.9}50%{transform:scale(1.32);opacity:1}}
+  display:flex;align-items:center;justify-content:center;z-index:2;cursor:pointer}
+#rc-cvs{position:absolute;inset:0}
 
 .albl{position:absolute;font-family:'Share Tech Mono',monospace;
   font-size:.53rem;color:rgba(0,212,255,.35);letter-spacing:.1em}
@@ -317,9 +284,7 @@ body.static-mode #casc-l,body.static-mode #casc-r{opacity:0}
 .emp-label{font-size:.52rem;letter-spacing:1px;color:var(--c);margin-top:1px}
 
 /* ── STATIC MODE ── */
-body.static-mode .aring,body.static-mode .c-glow,body.static-mode .c-hex,
 body.static-mode .led,body.static-mode .svdot,body.static-mode .td{animation:none!important}
-body.static-mode #arc-wrap.react .c-ring{box-shadow:0 0 18px var(--c)!important}
 </style>
 </head>
 <body>
@@ -423,21 +388,12 @@ body.static-mode #arc-wrap.react .c-ring{box-shadow:0 0 18px var(--c)!important}
   <canvas id="casc-l"></canvas>
   <canvas id="casc-r"></canvas>
 
-  <div id="arc-wrap">
+  <div id="arc-wrap" onclick="sendTestSignal()">
     <div class="albl t">ARC REACTOR · ORACLE SERVER</div>
     <div class="albl b">158.180.78.104:8000</div>
     <div class="albl l">STBL</div>
     <div class="albl r">SYNC</div>
-    <div class="aring aring-1"></div>
-    <div class="aring aring-2"></div>
-    <div class="aring aring-3"></div>
-    <div class="aring aring-4"></div>
-    <div class="aring aring-5"></div>
-    <div id="arc-core" onclick="sendTestSignal()">
-      <div class="c-glow"></div>
-      <div class="c-ring"></div>
-      <div class="c-hex"></div>
-    </div>
+    <canvas id="rc-cvs" width="224" height="224"></canvas>
   </div>
   <div id="arc-state">STANDBY</div>
 
@@ -912,15 +868,20 @@ reg('pong',()=>updateLatency(Date.now()-pingAt));
 reg('remote_speaking',m=>{
   typing.classList.add('show');addMsg('REMOTE ▶',m.message,'r');
   arcReact('LISTENING',600);addEvt('Remote: '+m.message.slice(0,40));
+  RC.speaking=true;setTimeout(()=>RC.speaking=false,2200);
 });
 reg('chat_response',m=>{
   typing.classList.remove('show');addMsg('JARVIS',m.message,'j');arcReact('RESPONDING',3500);
+  RC.fetching=false;
 });
 reg('proactive_alert',m=>{
   addMsg('JARVIS ALERT',m.message,'a');addAlert(m.message);arcReact('ALERT',3000);flash();
 });
 reg('orb_react',m=>arcReact(undefined,m.duration));
-reg('status',m=>{updateTelemetry(m.data);});
+reg('status',m=>{
+  updateTelemetry(m.data);
+  RC.focus=Math.max(20,100-(m.data.cpu_percent||0)*0.7);
+});
 reg('remote_status',m=>{setRemote(1,m.battery);addEvt(`Phone battery: ${m.battery}%`);});
 reg('remote_connected',m=>{
   setRemote(m.count);
@@ -996,6 +957,8 @@ let prevFuryStage='GENTLE';
 reg('anger_update',m=>{
   const pct=m.gauge||0,stage=m.stage||'GENTLE',label=m.label||'Composed';
   const color=pct>=80?'var(--red)':pct>=60?'#ff6b35':pct>=40?'var(--ylw)':pct>=20?'#90ee90':'var(--grn)';
+  const rcCol=pct>=80?'#ef4444':pct>=60?'#ff6b35':pct>=40?'#fbbf24':pct>=20?'#90ee90':'#22c55e';
+  RC.fury=pct;RC.color=rcCol;RC.stage=stage;
   const shadow=pct>=60?'#ef4444':'#22c55e';
   const chip=document.getElementById('fury-chip');
   const bFury=document.getElementById('b-fury');
@@ -1073,6 +1036,80 @@ reg('app_open_alert',m=>{
   addEvt(`${ctx} 앱: ${m.app} — 분노 ${m.fury}%`,cls);
   if(m.academy){addAlert(`수업 중 앱: ${m.app}`);flash();}
 });
+
+// ── CANVAS ARC REACTOR ──
+const RC={focus:65,fury:0,color:'#22c55e',stage:'GENTLE',speaking:false,fetching:false};
+const rcCvs=document.getElementById('rc-cvs');
+const rcCtx=rcCvs.getContext('2d');
+let rcAng=0,rcBr=0.5,rcBrD=1,rcFetch=0,rcVA=0,rcVP=0,rcFS=65,rcFU=0,rcLast=0;
+
+function _ra(h,a){
+  const r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+function _nArc(ctx,cx,cy,r,s,e,col,layers){
+  layers.forEach(([w,al])=>{ctx.beginPath();ctx.arc(cx,cy,r,s,e);ctx.strokeStyle=_ra(col,al);ctx.lineWidth=w;ctx.lineCap='round';ctx.stroke();});
+}
+function _nRing(ctx,cx,cy,r,col,alpha,layers){
+  layers.forEach(([w,al])=>{ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.strokeStyle=_ra(col,al*alpha);ctx.lineWidth=w;ctx.stroke();});
+}
+
+function drawReactor(ts){
+  const dt=Math.min(ts-rcLast,64);rcLast=ts;
+  const W=rcCvs.width,H=rcCvs.height,cx=W/2,cy=H*0.46;
+  const r=Math.min(W/2,H*0.50)*0.62;
+  if(r<8){requestAnimationFrame(drawReactor);return;}
+
+  rcCtx.clearRect(0,0,W,H);
+  rcFS+=(RC.focus-rcFS)*0.05;rcFU+=(RC.fury-rcFU)*0.05;
+  rcAng=(rcAng+(0.0014+rcFS/38000)*dt)%(Math.PI*2);
+  rcBr+=rcBrD*0.00055*dt;
+  if(rcBr>=1.0){rcBr=1.0;rcBrD=-1;}if(rcBr<=0.3){rcBr=0.3;rcBrD=1;}
+
+  if(RC.speaking){rcVA=Math.min(1,rcVA+0.003*dt);rcVP+=0.007*dt;}
+  else{rcVA=Math.max(0,rcVA-0.0014*dt);}
+  if(RC.fetching)rcFetch=(rcFetch+0.005*dt)%(Math.PI*2);
+
+  const col=RC.color,gA=0.18+rcBr*0.38;
+  _nRing(rcCtx,cx,cy,r,col,gA,[[12,0.07],[5,0.27],[1.8,0.72],[0.7,1.0]]);
+  for(let i=0;i<3;i++){
+    const s=rcAng+i*(Math.PI*2/3);
+    _nArc(rcCtx,cx,cy,r*0.88,s,s+1.68,col,[[10,0.025],[5.5,0.10],[2.2,0.42],[1.4,0.88]]);
+  }
+  _nRing(rcCtx,cx,cy,r*0.52,col,0.5+rcBr*0.5,[[3.5,0.08],[1.5,0.28],[0.8,0.60]]);
+
+  if(rcVA>0.01){
+    rcCtx.beginPath();
+    for(let i=0;i<=80;i++){
+      const ang=(i/80)*Math.PI*2;
+      const noise=Math.sin(ang*9+rcVP)*0.13*rcVA+Math.sin(ang*4+rcVP*0.55)*0.065*rcVA;
+      const rad=r*0.70*(1+noise);
+      const x=cx+Math.cos(ang)*rad,y=cy+Math.sin(ang)*rad;
+      i===0?rcCtx.moveTo(x,y):rcCtx.lineTo(x,y);
+    }
+    rcCtx.closePath();
+    rcCtx.strokeStyle=_ra(col,0.56*rcVA);rcCtx.lineWidth=1.5;rcCtx.stroke();
+  }
+
+  if(RC.fetching)_nArc(rcCtx,cx,cy,r*1.05,rcFetch,rcFetch+2.5,'#a78bfa',[[14,0.04],[6,0.18],[1.8,0.62]]);
+
+  const cR=r*0.26*rcBr;
+  const g=rcCtx.createRadialGradient(cx,cy,0,cx,cy,cR);
+  g.addColorStop(0,'rgba(255,255,255,0.90)');g.addColorStop(0.38,_ra(col,0.78));g.addColorStop(1,'transparent');
+  rcCtx.beginPath();rcCtx.arc(cx,cy,cR,0,Math.PI*2);rcCtx.fillStyle=g;rcCtx.fill();
+
+  const ly=cy+r+16;
+  rcCtx.save();
+  rcCtx.font='bold 7.5px "Orbitron",monospace';rcCtx.textAlign='center';
+  rcCtx.fillStyle=col;rcCtx.shadowColor=col;rcCtx.shadowBlur=6;
+  rcCtx.fillText('FOCUS  '+Math.round(rcFS),cx,ly);
+  rcCtx.fillStyle=RC.color;
+  rcCtx.fillText('FURY  '+Math.round(rcFU)+'%  ['+RC.stage+']',cx,ly+14);
+  rcCtx.shadowBlur=0;rcCtx.restore();
+
+  requestAnimationFrame(drawReactor);
+}
+requestAnimationFrame(drawReactor);
 
 connect();
 </script>
