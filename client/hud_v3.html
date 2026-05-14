@@ -439,23 +439,43 @@ const BOOT_LOGS=[
   'VOICE PATTERN: YE JUN CONFIRMED...',
   'ALL SYSTEMS NOMINAL. WELCOME HOME, SIR.',
 ];
-let _bi=0;
+let _bi=0, _bootStepMs=null;
 const _bb=document.getElementById('boot-bar');
 const _bl=document.getElementById('boot-log');
 const _bootEl=document.getElementById('boot');
 const _appEl=document.getElementById('app');
+
 function bootStep(){
   if(_bi>=BOOT_LOGS.length){
-    setTimeout(()=>{_bootEl.classList.add('fade');_appEl.classList.add('visible');
-      setTimeout(()=>_bootEl.style.display='none',900);},300);
+    // Boot complete — fade out; sound ends naturally at same moment
+    setTimeout(()=>{
+      _bootEl.classList.add('fade');
+      _appEl.classList.add('visible');
+      setTimeout(()=>_bootEl.style.display='none',900);
+    },300);
     return;
   }
   _bl.textContent=BOOT_LOGS[_bi];
   _bb.style.width=((_bi+1)/BOOT_LOGS.length*100)+'%';
   _bi++;
-  setTimeout(bootStep,260+Math.random()*160);
+  // Use synced timing if available, else random default
+  const ms=_bootStepMs!==null?_bootStepMs:(260+Math.random()*160);
+  setTimeout(bootStep,ms);
 }
-setTimeout(bootStep,500);
+
+function startBoot(durMs){
+  if(_bootFallback){clearTimeout(_bootFallback);_bootFallback=null;}
+  if(durMs>0){
+    // Distribute duration evenly across steps.
+    // Reserve 300ms pre-fade + 900ms fade = 1200ms for the finish sequence.
+    const forSteps=durMs-1200;
+    _bootStepMs=Math.max(150,Math.min(700,Math.round(forSteps/BOOT_LOGS.length)));
+  }
+  bootStep();
+}
+
+// Fallback: if bootDuration signal not received within 1 s, start with default timing
+let _bootFallback=setTimeout(()=>{_bootFallback=null;startBoot(0);},1000);
 
 // ── CLOCK + UPTIME ──
 let startMs=Date.now();
@@ -808,6 +828,8 @@ function initChannel(){
 
     jarvis.heartbeatLost.connect(()=>{setSrvLed(false);addEvt('Server connection lost','al');});
     jarvis.heartbeatOk.connect(()=>{setSrvLed(true);addEvt('Server connection restored','hi');});
+
+    jarvis.bootDuration.connect(durMs=>startBoot(durMs));
 
     jarvis.offlineMode.connect(offline=>{
       document.getElementById('offline-banner').classList.toggle('show',offline);

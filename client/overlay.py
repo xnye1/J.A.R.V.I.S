@@ -145,12 +145,22 @@ class JarvisDataBridge(QObject):
     heartbeatOk    = pyqtSignal()
     offlineMode    = pyqtSignal(bool)
     pingMs         = pyqtSignal(int)
+    bootDuration   = pyqtSignal(int)     # boot.wav duration in ms → JS sync
 
     # ── JS → Python ───────────────────────────────────────────────
 
     @pyqtSlot()
     def hud_ready(self) -> None:
         log.info("[Bridge] JS HUD ready.")
+        # Emit boot sound duration so JS can sync animation step timing
+        if _boot_duration_ms > 0:
+            self.bootDuration.emit(_boot_duration_ms)
+        # Start playback (no-op if file was missing or audio init failed)
+        if _boot_player is not None:
+            try:
+                _boot_player.play()
+            except Exception as exc:
+                log.warning("[Boot] play() failed: %s", exc)
 
     @pyqtSlot(str)
     def open_url(self, url: str) -> None:
@@ -186,11 +196,63 @@ class JarvisDataBridge(QObject):
 
 # _bridge is initialized in JarvisOverlay.run() AFTER QApplication is created.
 # Creating a QObject before QApplication exists is undefined behaviour in Qt.
-_bridge:        JarvisDataBridge | None = None
-_sys_state:     dict[str, float] = {"cpu": 0.0, "mem": 0.0, "disk": 0.0, "focus": 50.0}
-_ws_loop:       "asyncio.AbstractEventLoop | None" = None
-_http_base_url: str  = "http://158.180.78.104:8000"
-_ping_state:    dict = {"t0": 0.0, "pending": False}
+_bridge:          JarvisDataBridge | None = None
+_sys_state:       dict[str, float] = {"cpu": 0.0, "mem": 0.0, "disk": 0.0, "focus": 50.0}
+_ws_loop:         "asyncio.AbstractEventLoop | None" = None
+_http_base_url:   str  = "http://158.180.78.104:8000"
+_ping_state:      dict = {"t0": 0.0, "pending": False}
+_boot_duration_ms: int = 0      # WAV duration; 0 = no file / unreadable
+_boot_player:     Any  = None   # QMediaPlayer ref — kept alive here to avoid GC
+_boot_audio_out:  Any  = None   # QAudioOutput  ref — same reason
+
+
+# ── Boot audio helpers ─────────────────────────────────────────────────────────
+
+_BOOT_WAV = pathlib.Path(__file__).parent.parent / "assets" / "boot.wav"
+
+
+def _get_wav_duration_ms(path: pathlib.Path) -> int:
+    """Read WAV duration via stdlib (synchronous, no Qt needed). Returns 0 on error."""
+    try:
+        import wave as _wave
+        with _wave.open(str(path), "rb") as wf:
+            return int(wf.getnframes() / wf.getframerate() * 1000)
+    except Exception:
+        return 0
+
+
+def _init_boot_audio() -> None:
+    """Prepare QMediaPlayer for boot.wav. Must be called AFTER QApplication exists."""
+    global _boot_duration_ms, _boot_player, _boot_audio_out
+    if not _HAS_ENGINE:
+        return
+
+    # Duration is read synchronously — no Qt media pipeline needed
+    _boot_duration_ms = _get_wav_duration_ms(_BOOT_WAV)
+
+    try:
+        from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+
+        _boot_audio_out = QAudioOutput()
+        _boot_audio_out.setVolume(0.82)
+
+        _boot_player = QMediaPlayer()
+        _boot_player.setAudioOutput(_boot_audio_out)
+
+        if _BOOT_WAV.exists():
+            _boot_player.setSource(
+                QUrl.fromLocalFile(str(_BOOT_WAV.resolve()))
+            )
+            log.info("[Boot] Audio armed: %s  (%d ms)", _BOOT_WAV.name, _boot_duration_ms)
+        else:
+            log.info("[Boot] assets/boot.wav not found — audio skipped")
+            _boot_player   = None
+            _boot_audio_out = None
+
+    except Exception as exc:
+        log.warning("[Boot] Audio init failed: %s", exc)
+        _boot_player    = None
+        _boot_audio_out = None
 
 
 # ── WebHUD ─────────────────────────────────────────────────────────────────────
@@ -618,6 +680,9 @@ class JarvisOverlay:
         # QApplication now exists — safe to create QObject subclasses
         global _bridge
         _bridge = JarvisDataBridge()
+
+        # Prepare boot.wav player (needs QApplication; reads WAV duration via stdlib)
+        _init_boot_audio()
 
         # Diagnostics: error logger + HUD bridge
         from client.diagnostics import setup_diagnostics
