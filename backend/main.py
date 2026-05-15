@@ -20,8 +20,7 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
-_KEY        = os.getenv("ANTHROPIC_API_KEY", "")
-_SIMULATION = not _KEY or not _KEY.startswith("sk-ant-")
+_SIMULATION = not os.getenv("GEMINI_API_KEY", "")
 print(f"[JARVIS] {'Simulation' if _SIMULATION else 'Full'} mode.")
 
 from core.anger_engine   import anger

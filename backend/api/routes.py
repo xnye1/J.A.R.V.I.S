@@ -37,7 +37,7 @@ from core.system_info   import get_detailed_status, to_dict as status_to_dict
 from system.monitor     import get_current_status
 
 router  = APIRouter()
-_SIM    = not os.getenv("ANTHROPIC_API_KEY", "").startswith("sk-ant-")
+_SIM    = not os.getenv("GEMINI_API_KEY", "")
 jarvis  = JarvisPersona()
 
 # Injected by main.py after ConnectionManager is created
