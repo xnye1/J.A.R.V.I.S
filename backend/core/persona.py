@@ -5,7 +5,7 @@ Conversation history is persisted in Redis when available.
 
 import os
 import uuid
-import anthropic
+import google.generativeai as genai
 from dotenv import load_dotenv
 from core import memory
 from core.anger_engine import anger
@@ -29,8 +29,8 @@ SIMULATION_MSG = (
     "The neural link will be fully activated upon key injection."
 )
 
-_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-SIMULATION_MODE = not _API_KEY or not _API_KEY.startswith("sk-ant-")
+_GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
+SIMULATION_MODE = not _GEMINI_KEY
 
 # ── System prompt — Hybrid-Adaptive persona ───────────────────────────────────
 SYSTEM_PROMPT = """\
@@ -91,10 +91,29 @@ Prefix proactive warnings with: [JARVIS ALERT]
 """
 
 
+def _build_system_prompt() -> str:
+    return SYSTEM_PROMPT + anger.profile.tone_directive
+
+
+def _to_gemini_history(history: list[dict]) -> list[dict]:
+    """Convert standard {role, content} history to Gemini {role, parts} format."""
+    result = []
+    for msg in history:
+        role = "model" if msg["role"] == "assistant" else "user"
+        result.append({"role": role, "parts": [msg["content"]]})
+    return result
+
+
+def _make_model() -> genai.GenerativeModel:
+    genai.configure(api_key=_GEMINI_KEY)
+    return genai.GenerativeModel(
+        "gemini-2.0-flash",
+        system_instruction=_build_system_prompt(),
+    )
+
+
 class JarvisPersona:
     def __init__(self, session_id: str | None = None):
-        self.client     = anthropic.Anthropic(api_key=_API_KEY or "sk-placeholder")
-        self.model      = "claude-sonnet-4-6"
         self.session_id = session_id or str(uuid.uuid4())
         self._local_history: list[dict] = []
 
@@ -106,10 +125,6 @@ class JarvisPersona:
         self._local_history = history
         memory.save(self.session_id, history)
 
-    def _build_system_prompt(self) -> str:
-        """Base prompt + current anger tone directive."""
-        return SYSTEM_PROMPT + anger.profile.tone_directive
-
     def chat(self, user_message: str) -> str:
         if SIMULATION_MODE:
             stage = anger.profile
@@ -117,69 +132,47 @@ class JarvisPersona:
             return SIMULATION_MSG + suffix
 
         history = self._get_history()
-        history.append({"role": "user", "content": user_message})
 
         try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=1024,
-                system=self._build_system_prompt(),
-                messages=history,
-            )
-            reply = response.content[0].text
-        except anthropic.AuthenticationError:
-            return SIMULATION_MSG
-        except anthropic.APIConnectionError:
-            return "I appear to be experiencing network difficulties, Sir. Please stand by."
-        except Exception:
-            return SIMULATION_MSG
+            model = _make_model()
+            chat_session = model.start_chat(history=_to_gemini_history(history))
+            response = chat_session.send_message(user_message)
+            reply = response.text
+        except Exception as e:
+            return f"Neural link disrupted, Sir. Standing by. ({type(e).__name__})"
 
+        history.append({"role": "user", "content": user_message})
         history.append({"role": "assistant", "content": reply})
         self._put_history(history)
         return reply
 
     def proactive_alert(self, alert_context: str) -> str:
-        """Generate a context-aware proactive alert — tone-adjusted."""
         if SIMULATION_MODE:
             return f"[JARVIS ALERT] {alert_context}"
 
-        stage = anger.stage
-        tone_note = (
-            f" Apply {anger.profile.name} tone — controlled intensity, direct language."
-            if stage.value >= 2 else ""
-        )
-
         try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=200,
-                system=self._build_system_prompt(),
-                messages=[{"role": "user", "content": (
-                    f"Proactive system alert required. Context: {alert_context}. "
-                    f"Report in Data Protocol mode — no sentiment, facts and immediate action only. "
-                    f"Prefix with [JARVIS ALERT].{tone_note}"
-                )}],
+            model = _make_model()
+            response = model.generate_content(
+                f"Proactive system alert required. Context: {alert_context}. "
+                f"Report in Data Protocol mode — no sentiment, facts and immediate action only. "
+                f"Prefix with [JARVIS ALERT]."
             )
-            return response.content[0].text
+            return response.text
         except Exception:
             return f"[JARVIS ALERT] {alert_context}"
 
     def weekly_summary(self, briefing: dict) -> str:
-        """
-        Generate a 3-line weekly digest + next-week action plan from briefing data.
-        Simulation mode: template-filled string.  Full mode: Claude-generated.
-        """
-        eff        = briefing.get("avg_efficiency", 0)
-        sessions   = briefing.get("days_reviewed", 0)
-        distracts  = briefing.get("total_distractions", 0)
-        peak       = briefing.get("fury_peak", "GENTLE")
-        goals      = briefing.get("goals", [])
-        topics     = briefing.get("critical_topics", [])
-        dur_days   = briefing.get("duration_days", 1)
+        eff       = briefing.get("avg_efficiency", 0)
+        sessions  = briefing.get("days_reviewed", 0)
+        distracts = briefing.get("total_distractions", 0)
+        peak      = briefing.get("fury_peak", "GENTLE")
+        goals     = briefing.get("goals", [])
+        topics    = briefing.get("critical_topics", [])
+        dur_days  = briefing.get("duration_days", 1)
 
-        top_goal   = goals[0]["title"] if goals else "목표 미설정"
+        top_goal  = goals[0]["title"] if goals else "목표 미설정"
         top_goal_p = goals[0]["progress"] if goals else 0
-        weak_str   = ", ".join(f"{t['subject']} ({t['topic']})" for t in topics[:2]) or "없음"
+        weak_str  = ", ".join(f"{t['subject']} ({t['topic']})" for t in topics[:2]) or "없음"
 
         sim_summary = (
             f"WEEKLY DIGEST  ·  최근 {sessions}일 기록\n"
@@ -207,12 +200,9 @@ class JarvisPersona:
             f"Prefix with 'WEEKLY DIGEST  ·  최근 {sessions}일 기록' and a separator line."
         )
         try:
-            resp = self.client.messages.create(
-                model=self.model, max_tokens=400,
-                system=self._build_system_prompt(),
-                messages=[{"role": "user", "content": context}],
-            )
-            return resp.content[0].text
+            model = _make_model()
+            response = model.generate_content(context)
+            return response.text
         except Exception:
             return sim_summary
 
