@@ -136,15 +136,16 @@ class JarvisPersona:
 
         try:
             client = _get_client()
-            chat_session = client.chats.create(
+            contents = _to_gemini_history(history)
+            contents.append(types.Content(role="user", parts=[types.Part(text=user_message)]))
+            response = client.models.generate_content(
                 model="gemini-1.5-flash",
-                history=_to_gemini_history(history),
+                contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=_build_system_prompt(),
                     max_output_tokens=1024,
                 ),
             )
-            response = chat_session.send_message(user_message)
             reply = response.text
         except Exception as e:
             return f"Neural link disrupted, Sir. Standing by. ({type(e).__name__}: {e})"
