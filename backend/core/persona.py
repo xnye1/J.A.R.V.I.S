@@ -5,7 +5,8 @@ Conversation history is persisted in Redis when available.
 
 import os
 import uuid
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 from core import memory
 from core.anger_engine import anger
@@ -90,26 +91,26 @@ Prefix proactive warnings with: [JARVIS ALERT]
 • End without "Sir"
 """
 
+_client: genai.Client | None = None
+
+
+def _get_client() -> genai.Client:
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=_GEMINI_KEY)
+    return _client
+
 
 def _build_system_prompt() -> str:
     return SYSTEM_PROMPT + anger.profile.tone_directive
 
 
-def _to_gemini_history(history: list[dict]) -> list[dict]:
-    """Convert standard {role, content} history to Gemini {role, parts} format."""
+def _to_gemini_history(history: list[dict]) -> list[types.Content]:
     result = []
     for msg in history:
         role = "model" if msg["role"] == "assistant" else "user"
-        result.append({"role": role, "parts": [msg["content"]]})
+        result.append(types.Content(role=role, parts=[types.Part(text=msg["content"])]))
     return result
-
-
-def _make_model() -> genai.GenerativeModel:
-    genai.configure(api_key=_GEMINI_KEY)
-    return genai.GenerativeModel(
-        "gemini-2.0-flash",
-        system_instruction=_build_system_prompt(),
-    )
 
 
 class JarvisPersona:
@@ -134,12 +135,19 @@ class JarvisPersona:
         history = self._get_history()
 
         try:
-            model = _make_model()
-            chat_session = model.start_chat(history=_to_gemini_history(history))
+            client = _get_client()
+            chat_session = client.chats.create(
+                model="gemini-2.0-flash",
+                history=_to_gemini_history(history),
+                config=types.GenerateContentConfig(
+                    system_instruction=_build_system_prompt(),
+                    max_output_tokens=1024,
+                ),
+            )
             response = chat_session.send_message(user_message)
             reply = response.text
         except Exception as e:
-            return f"Neural link disrupted, Sir. Standing by. ({type(e).__name__})"
+            return f"Neural link disrupted, Sir. Standing by. ({type(e).__name__}: {e})"
 
         history.append({"role": "user", "content": user_message})
         history.append({"role": "assistant", "content": reply})
@@ -151,11 +159,16 @@ class JarvisPersona:
             return f"[JARVIS ALERT] {alert_context}"
 
         try:
-            model = _make_model()
-            response = model.generate_content(
-                f"Proactive system alert required. Context: {alert_context}. "
-                f"Report in Data Protocol mode — no sentiment, facts and immediate action only. "
-                f"Prefix with [JARVIS ALERT]."
+            client = _get_client()
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=f"Proactive system alert required. Context: {alert_context}. "
+                         f"Report in Data Protocol mode — no sentiment, facts and immediate action only. "
+                         f"Prefix with [JARVIS ALERT].",
+                config=types.GenerateContentConfig(
+                    system_instruction=_build_system_prompt(),
+                    max_output_tokens=200,
+                ),
             )
             return response.text
         except Exception:
@@ -170,9 +183,9 @@ class JarvisPersona:
         topics    = briefing.get("critical_topics", [])
         dur_days  = briefing.get("duration_days", 1)
 
-        top_goal  = goals[0]["title"] if goals else "목표 미설정"
+        top_goal   = goals[0]["title"] if goals else "목표 미설정"
         top_goal_p = goals[0]["progress"] if goals else 0
-        weak_str  = ", ".join(f"{t['subject']} ({t['topic']})" for t in topics[:2]) or "없음"
+        weak_str   = ", ".join(f"{t['subject']} ({t['topic']})" for t in topics[:2]) or "없음"
 
         sim_summary = (
             f"WEEKLY DIGEST  ·  최근 {sessions}일 기록\n"
@@ -200,8 +213,15 @@ class JarvisPersona:
             f"Prefix with 'WEEKLY DIGEST  ·  최근 {sessions}일 기록' and a separator line."
         )
         try:
-            model = _make_model()
-            response = model.generate_content(context)
+            client = _get_client()
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=context,
+                config=types.GenerateContentConfig(
+                    system_instruction=_build_system_prompt(),
+                    max_output_tokens=400,
+                ),
+            )
             return response.text
         except Exception:
             return sim_summary
