@@ -137,7 +137,7 @@ class JarvisPersona:
         try:
             client = _get_client()
             chat_session = client.chats.create(
-                model="gemini-2.0-flash",
+                model="gemini-1.5-flash",
                 history=_to_gemini_history(history),
                 config=types.GenerateContentConfig(
                     system_instruction=_build_system_prompt(),
@@ -161,7 +161,7 @@ class JarvisPersona:
         try:
             client = _get_client()
             response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-1.5-flash",
                 contents=f"Proactive system alert required. Context: {alert_context}. "
                          f"Report in Data Protocol mode — no sentiment, facts and immediate action only. "
                          f"Prefix with [JARVIS ALERT].",
@@ -215,7 +215,7 @@ class JarvisPersona:
         try:
             client = _get_client()
             response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-1.5-flash",
                 contents=context,
                 config=types.GenerateContentConfig(
                     system_instruction=_build_system_prompt(),
