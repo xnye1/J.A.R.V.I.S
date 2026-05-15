@@ -218,6 +218,10 @@ async def hud_page():
 async def remote_page():
     return HTMLResponse((STATIC / "remote.html").read_text(encoding="utf-8"))
 
+@app.get("/mobile", response_class=HTMLResponse)
+async def mobile_page():
+    return HTMLResponse((STATIC / "mobile_hud.html").read_text(encoding="utf-8"))
+
 
 # ── WebSocket hub ─────────────────────────────────────────────────────────────
 

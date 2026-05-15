@@ -101,6 +101,7 @@ Current handlers: connected · pong · remote_speaking · chat_response · proac
 | GET | `/telemetry` | Full psutil snapshot |
 | GET | `/hud` | HUD HTML page |
 | GET | `/remote` | Remote HTML page |
+| GET | `/mobile` | Mobile PWA HUD (iPhone Safari) |
 
 ---
 
