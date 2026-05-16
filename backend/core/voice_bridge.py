@@ -26,7 +26,7 @@ log = logging.getLogger("jarvis.voice")
 _EL_KEY     = os.getenv("ELEVENLABS_API_KEY", "")
 _EL_VOICE   = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 _EL_URL     = f"https://api.elevenlabs.io/v1/text-to-speech/{_EL_VOICE}/stream"
-_EL_ENABLED = _EL_KEY.startswith("sk_")
+_EL_ENABLED = bool(_EL_KEY)
 
 
 # ── Continuous voice mapping ──────────────────────────────────────────────────
