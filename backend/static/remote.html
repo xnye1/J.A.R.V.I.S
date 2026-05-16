@@ -158,6 +158,16 @@
     transition: transform 0.15s; -webkit-tap-highlight-color: transparent;
   }
   #send-btn:active { transform: scale(0.9); }
+  #send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  /* ── Streaming cursor ── */
+  .stream-cursor {
+    display: inline-block; width: 2px; height: 0.9em;
+    background: var(--cyan); margin-left: 2px;
+    vertical-align: text-bottom;
+    animation: cur-blink 0.6s ease-in-out infinite;
+  }
+  @keyframes cur-blink { 0%,100%{opacity:1} 50%{opacity:0} }
 </style>
 </head>
 <body>
@@ -304,12 +314,27 @@ getBattery();
 
 // ── Feed ──────────────────────────────────────────────────────────────────
 const feed = document.getElementById('feed');
+const box  = document.getElementById('response-box');
+
 function addMsg(who, text, cls) {
   const d = document.createElement('div');
   d.className = 'msg';
   d.innerHTML = `<div class="msg-who ${cls}">${who}</div><div class="msg-text ${cls}">${text}</div>`;
   feed.appendChild(d);
-  feed.parentElement.scrollTop = feed.parentElement.scrollHeight;
+  box.scrollTop = box.scrollHeight;
+}
+
+function createStreamBubble() {
+  const d    = document.createElement('div'); d.className = 'msg';
+  const who  = document.createElement('div'); who.className = 'msg-who j'; who.textContent = 'JARVIS';
+  const wrap = document.createElement('div'); wrap.className = 'msg-text j';
+  const span = document.createElement('span');
+  const cur  = document.createElement('span'); cur.className = 'stream-cursor';
+  wrap.appendChild(span); wrap.appendChild(cur);
+  d.appendChild(who); d.appendChild(wrap);
+  feed.appendChild(d);
+  box.scrollTop = box.scrollHeight;
+  return { span, cur };
 }
 
 // ── WebSocket ─────────────────────────────────────────────────────────────
@@ -334,33 +359,87 @@ function connect() {
   ws.onmessage = ({ data }) => {
     const msg = JSON.parse(data);
     if (msg.type === 'connected') {
-      const mode = msg.simulation_mode ? 'SIM' : 'LIVE';
-      document.getElementById('chip-mode').textContent = mode;
-      document.getElementById('chip-mode').className = 'chip-val' + (msg.simulation_mode ? ' warn' : '');
-      if (msg.simulation_mode) addMsg('SYSTEM', 'Simulation Mode — key pending 16th.', 'sim');
-      addMsg('JARVIS', 'Remote link established, Sir. Awaiting your command.', 'j');
-    } else if (msg.type === 'chat_response') {
-      addMsg('JARVIS', msg.message, 'j');
+      const live = !msg.simulation_mode;
+      document.getElementById('chip-mode').textContent = live ? 'LIVE' : 'SIM';
+      document.getElementById('chip-mode').className = 'chip-val' + (live ? '' : ' warn');
+      addMsg('JARVIS', 'Neural link established, Sir. Awaiting your command.', 'j');
     } else if (msg.type === 'proactive_alert') {
       addMsg('ALERT', msg.message, 'sim');
     } else if (msg.type === 'reactor_state') {
       applyReactorUI(msg.energy_saving);
     }
+    // chat_response from WS is ignored — streaming fetch handles display
   };
 }
 connect();
 
-// ── Send message ──────────────────────────────────────────────────────────
-function sendMsg(text) {
-  if (!text.trim() || ws?.readyState !== 1) return;
+// ── Send message (streaming) ───────────────────────────────────────────────
+let _streaming = false;
+
+async function sendMsg(text) {
+  if (!text.trim() || _streaming) return;
+  _streaming = true;
+  document.getElementById('send-btn').disabled = true;
+
   addMsg('YOU', text, 'u');
-  ws.send(JSON.stringify({ type: 'chat', message: text }));
+
+  // Notify HUD that remote is speaking
+  if (ws?.readyState === 1)
+    ws.send(JSON.stringify({ type: 'remote_speaking', message: text }));
+
+  const bubble = createStreamBubble();
+  let fullReply = '';
+
+  try {
+    const resp = await fetch('/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+    });
+
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let   buf     = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop(); // keep incomplete tail
+      for (const part of parts) {
+        if (!part.startsWith('data: ')) continue;
+        try {
+          const obj = JSON.parse(part.slice(6));
+          if (obj.done) { reader.cancel(); break; }
+          fullReply += obj.chunk;
+          bubble.span.textContent = fullReply;
+          box.scrollTop = box.scrollHeight;
+        } catch {}
+      }
+    }
+  } catch (err) {
+    fullReply = '통신 오류가 발생했습니다, Sir.';
+    bubble.span.textContent = fullReply;
+  }
+
+  bubble.cur.remove(); // remove blinking cursor
+  box.scrollTop = box.scrollHeight;
+
+  // Relay full reply to HUD via WS
+  if (ws?.readyState === 1)
+    ws.send(JSON.stringify({ type: 'hud_echo', query: text, message: fullReply }));
+
+  _streaming = false;
+  document.getElementById('send-btn').disabled = false;
 }
 
 function sendText() {
   const inp = document.getElementById('msg-input');
-  sendMsg(inp.value);
+  const val = inp.value.trim();
+  if (!val) return;
   inp.value = '';
+  sendMsg(val);
 }
 
 function quickSend(text) { sendMsg(text); }

@@ -342,6 +342,21 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 if guard:
                     await guard.end_session()
 
+            elif msg_type == "hud_echo":
+                # Remote sends this after streaming completes — relay to HUD
+                text  = data.get("query",   "").strip()
+                reply = data.get("message", "")
+                fury.on_message(focus_active=state.dopamine_guard_active)
+                await dispatcher.emit(
+                    {"type": "chat_response", "query": text, "message": reply},
+                    Priority.HIGH,
+                )
+                await dispatcher.emit(
+                    {"type": "orb_react", "intensity": 1.0, "duration": 3000},
+                    Priority.HIGH,
+                )
+                state.increment_messages()
+
             elif msg_type == "ping":
                 await ws.send_json({"type": "pong"})
 
