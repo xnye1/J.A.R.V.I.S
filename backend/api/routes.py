@@ -241,13 +241,49 @@ async def deploy_notify(req: DeployNotifyRequest, x_deploy_token: str = Header(d
 
 @router.post("/gigagenie")
 async def gigagenie_webhook(req: GigaGenieRequest):
-    if not req.utterance.strip():
-        raise HTTPException(status_code=400, detail="utterance is empty")
-    reply = jarvis.chat(req.utterance)
-    await dispatcher.emit({"type": "gigagenie_command", "utterance": req.utterance,
-                           "reply": reply, "deviceId": req.deviceId}, Priority.HIGH)
+    """
+    KT GiGA Genie KSK webhook — Method A (speak → JARVIS → GiGA Genie TTS).
+    Accepts both real KSK payloads and legacy test payloads.
+    Returns KSK-compliant {version, resultCode, output.speechText}.
+    """
+    # Extract utterance from KSK nested structure, fall back to legacy field
+    utterance = (
+        req.event.intent.extra.get("clientMessage")
+        or (req.action.parameters.get("clientMessage") or {}).get("value")
+        or req.utterance
+    ).strip()
+
+    if not utterance:
+        return {
+            "version":    "2.0",
+            "resultCode": "FAIL",
+            "output":     {"speechText": "죄송합니다, 말씀을 인식하지 못했습니다."},
+            "directives": [],
+        }
+
+    device_id = req.context.device.id if req.context.device.id != "unknown" else req.deviceId
+    session_id = req.context.session.id
+
+    reply = jarvis.chat(utterance)
+
+    await dispatcher.emit({
+        "type":      "gigagenie_command",
+        "utterance": utterance,
+        "reply":     reply,
+        "deviceId":  device_id,
+        "sessionId": session_id,
+    }, Priority.HIGH)
     await dispatcher.emit({"type": "orb_react", "intensity": 0.8, "duration": 2000}, Priority.HIGH)
-    return {"reply": reply, "simulation_mode": _SIM}
+
+    return {
+        "version":    "2.0",
+        "resultCode": "OK",
+        "output": {
+            "speechText":  reply,
+            "displayText": reply,
+        },
+        "directives": [],
+    }
 
 
 # ── Dopamine Guard ────────────────────────────────────────────────────────────

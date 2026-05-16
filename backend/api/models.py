@@ -17,11 +17,42 @@ class ChatResponse(BaseModel):
     simulation_mode: bool = False
 
 
+class _GGAction(BaseModel):
+    actionName: str  = ""
+    parameters: dict = {}
+
+class _GGIntent(BaseModel):
+    extra: dict = {}
+
+class _GGEvent(BaseModel):
+    intent: _GGIntent = _GGIntent()
+
+class _GGSession(BaseModel):
+    id: str = "unknown"
+
+class _GGDevice(BaseModel):
+    id: str = "unknown"
+
+class _GGContext(BaseModel):
+    session: _GGSession = _GGSession()
+    device:  _GGDevice  = _GGDevice()
+
 class GigaGenieRequest(BaseModel):
-    utterance: str
-    userId:    str  = "unknown"
-    deviceId:  str  = "unknown"
-    extra:     dict = {}
+    """
+    KT GiGA Genie KSK (KT Skill Kit) webhook payload.
+    Utterance extraction priority:
+      1. event.intent.extra.clientMessage
+      2. action.parameters.clientMessage.value
+      3. legacy utterance field (backward compat / test)
+    """
+    version:   str        = "2.0"
+    action:    _GGAction  = _GGAction()
+    event:     _GGEvent   = _GGEvent()
+    context:   _GGContext = _GGContext()
+    # legacy / test fields
+    utterance: str = ""
+    userId:    str = "unknown"
+    deviceId:  str = "unknown"
 
 
 class ReactorRequest(BaseModel):
