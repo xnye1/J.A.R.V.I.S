@@ -196,6 +196,10 @@
       <div class="chip-label">PHONE BAT</div>
       <div class="chip-val" id="chip-bat">--%</div>
     </div>
+    <div class="chip" id="tts-chip" onclick="toggleTTS()" style="cursor:pointer;flex:0 0 auto;padding:8px 12px;">
+      <div class="chip-label">VOICE</div>
+      <div class="chip-val" id="tts-val" style="font-size:11px;color:var(--muted)">OFF</div>
+    </div>
   </div>
 
   <!-- Response feed -->
@@ -426,6 +430,9 @@ async function sendMsg(text) {
   bubble.cur.remove(); // remove blinking cursor
   box.scrollTop = box.scrollHeight;
 
+  // TTS — read the reply aloud
+  speak(fullReply);
+
   // Relay full reply to HUD via WS
   if (ws?.readyState === 1)
     ws.send(JSON.stringify({ type: 'hud_echo', query: text, message: fullReply }));
@@ -478,6 +485,44 @@ function toggleReactor() {
     ws.send(JSON.stringify({ type: 'reactor_toggle', energy_saving: newEnergySaving }));
   applyReactorUI(newEnergySaving);
   addMsg('SYSTEM', newEnergySaving ? 'Energy saving mode ON.' : 'Reactor full power.', 'sim');
+}
+
+// ── TTS ───────────────────────────────────────────────────────────────────
+let ttsEnabled = false;
+let _ttsAudio  = null;
+
+function toggleTTS() {
+  ttsEnabled = !ttsEnabled;
+  const val = document.getElementById('tts-val');
+  val.textContent  = ttsEnabled ? 'ON' : 'OFF';
+  val.style.color  = ttsEnabled ? 'var(--cyan)' : 'var(--muted)';
+}
+
+async function speak(text) {
+  if (!ttsEnabled || !text) return;
+  if (_ttsAudio) { _ttsAudio.pause(); _ttsAudio = null; }
+  try {
+    const resp = await fetch('/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+    });
+    if (resp.ok) {
+      const blob = await resp.blob();
+      const url  = URL.createObjectURL(blob);
+      _ttsAudio  = new Audio(url);
+      _ttsAudio.play();
+      _ttsAudio.onended = () => { URL.revokeObjectURL(url); _ttsAudio = null; };
+      return;
+    }
+  } catch {}
+  // Fallback: browser SpeechSynthesis (works without ElevenLabs key)
+  if (window.speechSynthesis) {
+    const utt  = new SpeechSynthesisUtterance(text);
+    utt.lang   = 'ko-KR';
+    utt.rate   = 1.05;
+    window.speechSynthesis.speak(utt);
+  }
 }
 
 // ── Voice input (MediaRecorder → Groq Whisper STT) ────────────────────────

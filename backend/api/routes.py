@@ -103,6 +103,23 @@ async def reset_conversation():
     return {"status": "conversation reset"}
 
 
+@router.post("/tts")
+async def text_to_speech(req: ChatRequest):
+    """
+    Convert text to speech via ElevenLabs.
+    Returns audio/mpeg stream. Falls back to 503 if key not set.
+    """
+    from core.voice_bridge import synthesize
+    from fastapi.responses import Response
+
+    if not req.message.strip():
+        raise HTTPException(status_code=400, detail="Text is empty.")
+    audio = await synthesize(req.message)
+    if audio is None:
+        raise HTTPException(status_code=503, detail="TTS unavailable — ELEVENLABS_API_KEY not set.")
+    return Response(content=audio, media_type="audio/mpeg")
+
+
 @router.post("/stt")
 async def speech_to_text(audio: UploadFile = File(...)):
     """
