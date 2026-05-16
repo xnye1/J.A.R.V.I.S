@@ -294,7 +294,12 @@ function onMsg(msg) {
       break;
 
     case 'proactive_alert':
-      addMsg('⚠ ALERT', msg.message, 's');
+      addMsg('⚠ JARVIS', msg.message, 's');
+      break;
+
+    case 'proactive_speak':
+      // JARVIS initiated the conversation — show in feed
+      addMsg('JARVIS', msg.text, 'j');
       break;
   }
 }

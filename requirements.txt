@@ -24,3 +24,6 @@ tzdata
 
 # ── TTS ──────────────────────────────────────────────────────
 gtts==2.5.0
+
+# ── Browser automation (optional — graceful fallback to httpx) ─
+playwright>=1.44.0

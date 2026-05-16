@@ -34,10 +34,11 @@ from core.empathy_engine import empathy
 from core.dorm_tracker  import dorm_tracker
 from core.fury_tracker  import fury
 from core.persona       import JarvisPersona
+from core.proactive_agent import ProactiveAgent
 from core.state         import state
 from core.stealth       import classify_location, current_mute_state, decide_output, FocusMode, OutputMode
 from core.system_info   import get_detailed_status
-from core.voice_bridge  import handle_arrival, speak
+from core.voice_bridge  import handle_arrival, speak, synthesize
 from services           import ServiceRegistry
 from system.monitor     import ProactiveEngine, get_current_status
 import api.routes as routes
@@ -99,6 +100,45 @@ class ConnectionManager:
 jarvis   = JarvisPersona()
 manager  = ConnectionManager()
 registry = ServiceRegistry(dispatcher, state)
+
+
+# ── Proactive push — text + TTS to ALL connected clients ─────────────────────
+
+async def _proactive_push(text: str) -> None:
+    """
+    Force-push a JARVIS proactive briefing:
+      • HUD / Remote: proactive_alert text event
+      • iPhone streaming: proactive_speak (text display) + audio_chunk (TTS)
+    Called by ProactiveAgent without any user request.
+    """
+    route = decide_output()
+    if route.mode in (OutputMode.SILENT, OutputMode.STANDBY):
+        print(f"[Proactive] suppressed (muted): {text[:60]}")
+        return
+
+    # Text to HUD and remote
+    await manager.broadcast_hud({"type": "proactive_alert", "message": text})
+    await manager.broadcast_remote({"type": "proactive_alert", "message": text})
+
+    # Text + audio to iPhone streaming clients
+    if manager.streaming_count > 0:
+        await manager.broadcast_streaming({
+            "type": "proactive_speak",
+            "text": text,
+        })
+        # Synthesize and push TTS audio
+        audio = await synthesize(text)
+        if audio:
+            await manager.broadcast_streaming({
+                "type": "audio_chunk",
+                "data": base64.b64encode(audio).decode(),
+                "mime": "audio/mpeg",
+            })
+
+    print(f"[Proactive] pushed: {text[:80]}")
+
+
+proactive_time_agent = ProactiveAgent(push_fn=_proactive_push)
 
 
 async def _on_alert(alert_text: str, _status) -> None:
@@ -241,15 +281,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     t3 = asyncio.create_task(dispatcher.run())
     t4 = asyncio.create_task(_mock_service_broadcaster())
     t5 = asyncio.create_task(_fury_ticker())
+    t6 = asyncio.create_task(proactive_time_agent.run())
     await registry.start_all()
 
-    print("[JARVIS] All systems nominal, Sir.")
+    print("[JARVIS] All systems nominal, Sir. Proactive engine armed.")
     yield
 
     await registry.stop_all()
     proactive_engine.stop()
     dispatcher.stop()
-    for t in (t1, t2, t3, t4, t5):
+    for t in (t1, t2, t3, t4, t5, t6):
         t.cancel()
 
 
@@ -383,10 +424,14 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                                              "energy_saving": state.energy_saving})
 
             elif msg_type == "calendar_data":
+                cal_events = data.get("events", [])
+                cal_date   = data.get("date", "")
                 await dispatcher.emit({"type": "calendar_data",
-                                       "date":   data.get("date", ""),
-                                       "events": data.get("events", [])},
+                                       "date":   cal_date,
+                                       "events": cal_events},
                                       Priority.NORMAL)
+                # Feed calendar to proactive time agent for pre-event triggers
+                proactive_time_agent.set_calendar(cal_events, cal_date)
 
             elif msg_type == "focus_start":
                 from services.dopamine_guard import DopamineGuard

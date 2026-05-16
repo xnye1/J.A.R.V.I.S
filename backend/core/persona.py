@@ -244,3 +244,34 @@ class JarvisPersona:
     def reset_conversation(self) -> None:
         self._local_history = []
         memory.clear(self.session_id)
+
+    def tts_speak(self, context: str) -> str:
+        """
+        Generate a proactive briefing optimised for TTS delivery.
+        No markdown, no emojis, natural spoken Korean, ends with Sir/Boss.
+        """
+        import re
+        _TTS_SYS = (
+            SYSTEM_PROMPT
+            + anger.profile.tone_directive
+            + "\n\n━━━ TTS OUTPUT MODE ━━━\n"
+            "This text will be read aloud. Rules:\n"
+            "• Natural spoken Korean ONLY — zero markdown, zero emojis.\n"
+            "• No *, **, #, -, >, `, ~, or any formatting symbol.\n"
+            "• Maximum 3 sentences. Concise and purposeful.\n"
+            "• Always end with ', Sir' or ', Boss'.\n"
+        )
+        if SIMULATION_MODE:
+            return "현재 시뮬레이션 모드입니다. API 키를 설정해 주시면 즉시 활성화됩니다, Sir."
+        try:
+            raw = llm.generate(
+                [{"role": "user", "content": context}],
+                system=_TTS_SYS,
+                max_tokens=200,
+            )
+            # Strip any residual markdown artifacts
+            raw = re.sub(r'[*_#`~>]', '', raw)
+            raw = re.sub(r'\s+', ' ', raw).strip()
+            return raw
+        except Exception:
+            return _witty_error()
