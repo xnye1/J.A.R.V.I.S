@@ -480,38 +480,68 @@ function toggleReactor() {
   addMsg('SYSTEM', newEnergySaving ? 'Energy saving mode ON.' : 'Reactor full power.', 'sim');
 }
 
-// ── Voice input (Web Speech API) ──────────────────────────────────────────
+// ── Voice input (MediaRecorder → Groq Whisper STT) ────────────────────────
 const voiceBtn = document.getElementById('voice-btn');
 const hint     = document.getElementById('voice-hint');
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-if (SR) {
-  const rec = new SR();
-  rec.lang = 'ko-KR';
-  rec.interimResults = false;
-  rec.maxAlternatives = 1;
+let _mediaRec    = null;
+let _audioChunks = [];
+let _recMime     = '';
 
-  rec.onstart = () => {
+async function startRecording() {
+  if (_streaming || _mediaRec) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    _recMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+             : MediaRecorder.isTypeSupported('audio/mp4')              ? 'audio/mp4'
+             : '';
+    _mediaRec    = new MediaRecorder(stream, _recMime ? { mimeType: _recMime } : {});
+    _audioChunks = [];
+    _mediaRec.ondataavailable = e => { if (e.data.size > 0) _audioChunks.push(e.data); };
+    _mediaRec.start();
     voiceBtn.classList.add('listening');
     hint.textContent = '듣는 중...';
-  };
-  rec.onend = () => {
-    voiceBtn.classList.remove('listening');
-    hint.textContent = 'HOLD TO SPEAK';
-  };
-  rec.onresult = (e) => {
-    const text = e.results[0][0].transcript;
-    sendMsg(text);
-  };
-  rec.onerror = () => {
-    voiceBtn.classList.remove('listening');
-    hint.textContent = 'HOLD TO SPEAK';
-  };
+  } catch {
+    hint.textContent = '마이크 권한 필요';
+    setTimeout(() => { hint.textContent = 'HOLD TO SPEAK'; }, 2500);
+  }
+}
 
-  voiceBtn.addEventListener('touchstart', e => { e.preventDefault(); rec.start(); });
-  voiceBtn.addEventListener('touchend',   e => { e.preventDefault(); rec.stop(); });
-  voiceBtn.addEventListener('mousedown',  () => rec.start());
-  voiceBtn.addEventListener('mouseup',    () => rec.stop());
+async function stopRecording() {
+  if (!_mediaRec || _mediaRec.state === 'inactive') return;
+  voiceBtn.classList.remove('listening');
+  hint.textContent = '전사 중...';
+
+  await new Promise(resolve => {
+    _mediaRec.onstop = resolve;
+    _mediaRec.stop();
+    _mediaRec.stream.getTracks().forEach(t => t.stop());
+  });
+  _mediaRec = null;
+
+  const mime = _recMime.includes('mp4') ? 'audio/mp4' : 'audio/webm';
+  const ext  = mime === 'audio/mp4' ? 'voice.mp4' : 'voice.webm';
+  const blob = new Blob(_audioChunks, { type: mime });
+
+  try {
+    const fd = new FormData();
+    fd.append('audio', blob, ext);
+    const resp = await fetch('/stt', { method: 'POST', body: fd });
+    if (!resp.ok) throw new Error(resp.status);
+    const { text } = await resp.json();
+    hint.textContent = 'HOLD TO SPEAK';
+    if (text) sendMsg(text);
+  } catch {
+    hint.textContent = 'STT 오류';
+    setTimeout(() => { hint.textContent = 'HOLD TO SPEAK'; }, 2500);
+  }
+}
+
+if (navigator.mediaDevices?.getUserMedia) {
+  voiceBtn.addEventListener('touchstart', e => { e.preventDefault(); startRecording(); });
+  voiceBtn.addEventListener('touchend',   e => { e.preventDefault(); stopRecording(); });
+  voiceBtn.addEventListener('mousedown',  () => startRecording());
+  voiceBtn.addEventListener('mouseup',    () => stopRecording());
 } else {
   hint.textContent = 'VOICE UNAVAILABLE';
   voiceBtn.style.opacity = '0.4';

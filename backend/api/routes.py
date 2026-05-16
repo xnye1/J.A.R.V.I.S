@@ -15,7 +15,7 @@ log = logging.getLogger("jarvis.routes")
 
 import json
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from api.models import (
@@ -101,6 +101,32 @@ async def chat(req: ChatRequest):
 async def reset_conversation():
     jarvis.reset_conversation()
     return {"status": "conversation reset"}
+
+
+@router.post("/stt")
+async def speech_to_text(audio: UploadFile = File(...)):
+    """
+    Transcribe audio via Groq Whisper.
+    Accepts: audio/webm, audio/mp4, audio/wav, audio/m4a (≤25 MB).
+    Returns: {"text": "transcribed text"}
+    """
+    groq_key = os.getenv("GROQ_API_KEY", "")
+    if not groq_key:
+        raise HTTPException(status_code=503, detail="STT unavailable — GROQ_API_KEY not set.")
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio file.")
+
+    from openai import OpenAI
+    client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
+    filename = audio.filename or "voice.webm"
+    content_type = audio.content_type or "audio/webm"
+    result = client.audio.transcriptions.create(
+        file=(filename, audio_bytes, content_type),
+        model="whisper-large-v3-turbo",
+        language="ko",
+    )
+    return {"text": result.text.strip()}
 
 
 @router.post("/chat/stream")
