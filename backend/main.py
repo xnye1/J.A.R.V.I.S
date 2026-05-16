@@ -151,6 +151,16 @@ async def _status_broadcaster() -> None:
                 "alerts":  pa.alerts,
             })
 
+        # Auto-feed laptop telemetry into device context for LLM injection
+        from core.device_context import device_ctx
+        device_ctx.update_laptop({
+            "battery":  s.battery_percent,
+            "charging": s.battery_plugged,
+            "cpu":      s.cpu_percent,
+            "ram":      s.memory_percent,
+            "disk":     s.disk_percent,
+        })
+
 
 # ── Mock service report broadcaster ──────────────────────────────────────────
 
@@ -303,6 +313,12 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
             elif msg_type == "remote_status":
                 await manager.broadcast_hud({"type": "remote_status", **data})
+                # Keep phone context updated from WS battery data
+                from core.device_context import device_ctx
+                device_ctx.update_phone({
+                    "battery":  data.get("battery", 0),
+                    "charging": data.get("plugged", False),
+                })
 
             elif msg_type == "location":
                 # Phone GPS update → stealth routing + dorm tracking + Welcome Home

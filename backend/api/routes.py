@@ -24,6 +24,7 @@ from api.models import (
     CalendarPayload, ChatRequest, ChatResponse, DeployNotifyRequest,
     FocusRequest, GigaGenieRequest, ReactorRequest,
     RememberRequest, RecallRequest,
+    PhoneSyncRequest, LaptopSyncRequest,
 )
 from core.anger_engine   import anger
 from core.dispatcher     import dispatcher, Priority
@@ -691,6 +692,47 @@ async def weather():
     if svc is None:
         raise HTTPException(status_code=503, detail="SchoolService not available.")
     return await svc.get_weather()
+
+
+# ── Device Context Sync ──────────────────────────────────────────────────────
+
+@router.post("/sync/phone")
+async def sync_phone(req: PhoneSyncRequest):
+    """
+    Receive phone state snapshot from iOS Shortcut or Android Tasker.
+    Data is stored in DeviceContext and injected into every subsequent LLM call.
+    """
+    from core.device_context import device_ctx
+    device_ctx.update_phone(req.model_dump())
+    # Broadcast to HUD so it can show phone state changes
+    await dispatcher.emit({
+        "type":    "device_sync",
+        "device":  "phone",
+        "battery": req.battery,
+        "charging": req.charging,
+        "zone":    req.location_zone,
+        "notif_count": len(req.notifications),
+    }, Priority.LOW)
+    return {"status": "ok", "device": "phone", "context": device_ctx.build_context_block()}
+
+
+@router.post("/sync/laptop")
+async def sync_laptop(req: LaptopSyncRequest):
+    """
+    Receive laptop state from a local script (active window title, etc.).
+    CPU/RAM/battery are auto-populated by the server's psutil broadcaster,
+    but active_window must come from the laptop itself.
+    """
+    from core.device_context import device_ctx
+    device_ctx.update_laptop(req.model_dump())
+    return {"status": "ok", "device": "laptop", "context": device_ctx.build_context_block()}
+
+
+@router.get("/sync/context")
+async def get_context():
+    """View the current device context that will be injected into LLM calls."""
+    from core.device_context import device_ctx
+    return device_ctx.snapshot()
 
 
 # ── Debug / Test ──────────────────────────────────────────────────────────────

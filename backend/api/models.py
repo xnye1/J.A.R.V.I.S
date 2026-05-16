@@ -135,3 +135,65 @@ class AlertRequest(BaseModel):
     """Client-injected alert — broadcast as proactive_alert WS event."""
     message:  str
     severity: str = "HIGH"   # HIGH | NORMAL | LOW
+
+
+# ── Device Context Sync ───────────────────────────────────────────────────────
+
+class NotificationItem(BaseModel):
+    """Single notification from phone."""
+    app:    str = ""
+    sender: str = ""
+    text:   str = ""
+    time:   str = ""   # e.g. "14:32"
+
+
+class PhoneSyncRequest(BaseModel):
+    """
+    POST /sync/phone — payload from iOS Shortcut or Android Tasker.
+
+    Minimal required fields: battery.
+    All others are optional but enrich JARVIS context the more you send.
+
+    iOS Shortcut example payload:
+      {
+        "battery": 45, "charging": false,
+        "location_zone": "home",
+        "wifi": "HomeNetwork",
+        "active_app": "YouTube",
+        "notifications": [
+          {"app": "Messages", "sender": "홍길동", "text": "언제와?", "time": "14:32"}
+        ]
+      }
+    """
+    battery:       int                    = 0
+    charging:      bool                   = False
+    location_zone: str                    = ""   # home | school | out | dorm | unknown
+    wifi:          str                    = ""
+    active_app:    str                    = ""
+    volume:        int                    = 0
+    notifications: list[NotificationItem] = []
+
+
+class LaptopSyncRequest(BaseModel):
+    """
+    POST /sync/laptop — payload from a local script on the laptop.
+
+    The server auto-populates CPU/RAM/battery from psutil every 5 s, but
+    active_window must be pushed from the laptop (psutil can't read it).
+
+    Python example (run on laptop):
+      import subprocess, requests, psutil
+      win = subprocess.check_output(['xdotool','getactivewindow','getwindowname']).decode()
+      bat = psutil.sensors_battery()
+      requests.post('http://158.180.78.104:8000/sync/laptop', json={
+          'active_window': win.strip(),
+          'battery': int(bat.percent), 'charging': bat.power_plugged,
+      })
+    """
+    battery:       int   = 0
+    charging:      bool  = False
+    cpu:           float = 0.0
+    ram:           float = 0.0
+    disk:          float = 0.0
+    active_window: str   = ""
+    uptime_hours:  float = 0.0

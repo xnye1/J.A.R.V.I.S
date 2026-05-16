@@ -135,8 +135,11 @@ class JarvisPersona:
                 f"LLM_PROVIDER({llm.PROVIDER})의 API 키가 서버 환경 변수에 설정되지 않았습니다, Sir. "
                 ".env 파일을 확인해 주십시오."
             )
-        history = self._get_history()
-        messages = history + [{"role": "user", "content": user_message}]
+        from core.device_context import device_ctx
+        history  = self._get_history()
+        # Inject device context into LLM call, but save original to history
+        augmented = device_ctx.augment_message(user_message)
+        messages  = history + [{"role": "user", "content": augmented}]
         try:
             reply = llm.generate(messages, system=_build_system_prompt(), max_tokens=1024)
         except Exception:
@@ -148,7 +151,7 @@ class JarvisPersona:
         return reply
 
     def chat_stream(self, user_message: str) -> Iterator[str]:
-        """Streaming version of chat — yields text chunks. Saves history on completion."""
+        """Streaming version — injects device context, yields chunks, saves original to history."""
         if SIMULATION_MODE:
             yield (
                 f"LLM_PROVIDER({llm.PROVIDER})의 API 키가 설정되지 않았습니다, Sir. "
@@ -156,8 +159,10 @@ class JarvisPersona:
             )
             return
 
-        history  = self._get_history()
-        messages = history + [{"role": "user", "content": user_message}]
+        from core.device_context import device_ctx
+        history   = self._get_history()
+        augmented = device_ctx.augment_message(user_message)
+        messages  = history + [{"role": "user", "content": augmented}]
         full_reply = ""
         try:
             for chunk in llm.stream(messages, system=_build_system_prompt(), max_tokens=1024):
