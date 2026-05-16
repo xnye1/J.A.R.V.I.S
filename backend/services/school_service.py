@@ -122,18 +122,30 @@ class SchoolService(BaseService):
                 f"https://api.open-meteo.com/v1/forecast"
                 f"?latitude={lat}&longitude={lon}"
                 f"&current=temperature_2m,apparent_temperature,weathercode,windspeed_10m"
+                f"&daily=temperature_2m_max,temperature_2m_min"
+                f"&forecast_days=1"
                 f"&timezone=Asia%2FSeoul"
             )
             async with httpx.AsyncClient(timeout=8) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
-                cur  = resp.json().get("current", {})
-                code = cur.get("weathercode", 0)
+                data  = resp.json()
+                cur   = data.get("current", {})
+                daily = data.get("daily", {})
+                code  = cur.get("weathercode", 0)
+                temp  = round(cur.get("temperature_2m", 0), 1)
+                max_t = round(daily.get("temperature_2m_max", [temp])[0], 1)
+                min_t = round(daily.get("temperature_2m_min", [temp])[0], 1)
                 self._weather_cache = {
-                    "temp":       round(cur.get("temperature_2m", 0), 1),
+                    # canonical keys (used by mock_report / HUD)
+                    "temp":       temp,
                     "feels_like": round(cur.get("apparent_temperature", 0), 1),
                     "condition":  _WMO_CODES.get(code, f"코드 {code}"),
                     "wind_kmh":   round(cur.get("windspeed_10m", 0), 1),
+                    # alias keys expected by proactive_agent._fetch_weather()
+                    "temp_c":     temp,
+                    "max_c":      max_t,
+                    "min_c":      min_t,
                 }
         except Exception as exc:
             log.debug("Weather fetch failed: %s", exc)

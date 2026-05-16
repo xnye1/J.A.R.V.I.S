@@ -239,13 +239,17 @@ async def _fetch_weather() -> str:
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get("http://127.0.0.1:8000/weather")
             if resp.is_success:
-                d = resp.json()
-                return (
-                    f"{d.get('condition', '알 수 없음')}, "
-                    f"현재 {d.get('temp_c', '?')}도, "
-                    f"최고 {d.get('max_c', '?')}도, "
-                    f"최저 {d.get('min_c', '?')}도"
-                )
+                d    = resp.json()
+                temp = d.get("temp_c") or d.get("temp", "?")
+                hi   = d.get("max_c", "")
+                lo   = d.get("min_c", "")
+                cond = d.get("condition", "알 수 없음")
+                parts = [f"{cond}, 현재 {temp}도"]
+                if hi:
+                    parts.append(f"최고 {hi}도")
+                if lo:
+                    parts.append(f"최저 {lo}도")
+                return ", ".join(parts)
     except Exception:
         pass
     return "날씨 정보를 가져오지 못했습니다"
