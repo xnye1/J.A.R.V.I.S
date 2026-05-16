@@ -105,16 +105,26 @@ async def reset_conversation():
 
 @router.post("/tts")
 async def text_to_speech(req: ChatRequest):
-    """ElevenLabs TTS — returns audio/mpeg. 503 if key not set or synthesis fails."""
+    """Google TTS (gTTS) — free, no API key required. Returns audio/mpeg."""
+    import asyncio, io
     from fastapi.responses import Response
-    from core.voice_bridge import synthesize
+    from gtts import gTTS
 
-    if not req.message.strip():
+    text = req.message.strip()
+    if not text:
         raise HTTPException(status_code=400, detail="Text is empty.")
-    audio = await synthesize(req.message)
-    if not audio:
-        raise HTTPException(status_code=503, detail="TTS unavailable.")
-    return Response(content=audio, media_type="audio/mpeg")
+
+    def _synth():
+        buf = io.BytesIO()
+        gTTS(text=text, lang="ko", slow=False).write_to_fp(buf)
+        buf.seek(0)
+        return buf.read()
+
+    try:
+        audio = await asyncio.to_thread(_synth)
+        return Response(content=audio, media_type="audio/mpeg")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 @router.post("/stt")
