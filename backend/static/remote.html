@@ -4,170 +4,181 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#000814">
 <title>JARVIS Remote</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root {
-    --cyan: #00f2ff; --bg: #000814; --panel: rgba(10,22,40,0.9);
-    --text: #cbd5e1; --muted: #475569; --border: rgba(0,242,255,0.22);
-    --alert: #ef4444; --purple: #a78bfa;
-  }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --cyan: #00f2ff; --bg: #000814; --panel: rgba(10,22,40,0.92);
+  --text: #cbd5e1; --muted: #475569; --border: rgba(0,242,255,0.2);
+  --alert: #ef4444; --purple: #a78bfa; --green: #22c55e;
+}
 
-  html, body { width: 100%; height: 100%; background: var(--bg); color: var(--text);
-    font-family: 'Courier New', monospace; overflow: hidden; }
+html, body {
+  width: 100%; height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: 'Courier New', monospace;
+  overflow: hidden;
+  -webkit-text-size-adjust: 100%;
+}
 
-  #app { display: flex; flex-direction: column; height: 100dvh;
-    padding: env(safe-area-inset-top, 12px) 16px env(safe-area-inset-bottom, 16px); gap: 10px; }
+/* ── Layout ─────────────────────────────────────────────────────────── */
+#app {
+  display: flex; flex-direction: column; height: 100dvh;
+  padding: env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px);
+}
 
-  /* ── Top bar ── */
-  #topbar { display: flex; align-items: center; justify-content: space-between;
-    padding: 8px 0; border-bottom: 1px solid var(--border); }
-  #topbar .brand { color: var(--cyan); font-size: 13px; letter-spacing: 4px; font-weight: 700; }
-  #conn-wrap { display: flex; align-items: center; gap: 6px; font-size: 9px;
-    letter-spacing: 2px; color: var(--muted); }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--alert); }
-  .dot.on { background: #22c55e; animation: blink 2s infinite; }
-  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+/* ── Top bar ─────────────────────────────────────────────────────────── */
+#topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.brand { color: var(--cyan); font-size: 14px; letter-spacing: 4px; font-weight: 700; }
+.status-row { display: flex; align-items: center; gap: 10px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--alert); flex-shrink: 0; }
+.dot.on { background: var(--green); animation: blink 2s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+#conn-label { font-size: 9px; letter-spacing: 2px; color: var(--muted); }
+#chip-mode {
+  font-size: 9px; letter-spacing: 2px; font-weight: 700;
+  padding: 3px 8px; border-radius: 6px;
+  background: rgba(0,242,255,.08); border: 1px solid var(--border);
+  color: var(--cyan);
+}
+#chip-mode.sim { color: #fbbf24; border-color: rgba(251,191,36,.3); background: rgba(251,191,36,.07); }
 
-  /* ── Status strip ── */
-  #status-strip { display: flex; gap: 8px; }
-  .chip { flex: 1; background: var(--panel); border: 1px solid var(--border);
-    border-radius: 10px; padding: 8px 10px; text-align: center; }
-  .chip-label { font-size: 8px; color: var(--muted); letter-spacing: 2px; }
-  .chip-val { font-size: 16px; font-weight: 700; color: var(--cyan); margin-top: 2px; }
-  .chip-val.warn { color: var(--alert); }
+/* ── Chat feed ───────────────────────────────────────────────────────── */
+#feed-wrap {
+  flex: 1; overflow-y: auto; padding: 12px 14px;
+  scrollbar-width: none;
+}
+#feed-wrap::-webkit-scrollbar { display: none; }
+#feed { display: flex; flex-direction: column; gap: 10px; }
 
-  /* ── Response display ── */
-  #response-box { flex: 1; background: var(--panel); border: 1px solid var(--border);
-    border-radius: 14px; padding: 14px; overflow-y: auto;
-    scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-  .msg { margin-bottom: 10px; }
-  .msg-who { font-size: 8px; letter-spacing: 2px; margin-bottom: 3px; }
-  .msg-who.j { color: var(--cyan); }
-  .msg-who.u { color: var(--purple); }
-  .msg-text { font-size: 13px; line-height: 1.6; padding: 8px 10px;
-    border-radius: 0 10px 10px 0; background: rgba(15,23,42,0.7); }
-  .msg-text.j { border-left: 2px solid var(--cyan); }
-  .msg-text.u { border-left: 2px solid var(--purple); color: var(--purple); }
-  .msg-text.sim { border-left-color: #fbbf24; color: #fbbf24; font-size: 11px; }
+.msg-block { display: flex; flex-direction: column; gap: 3px; }
+.msg-who { font-size: 8px; letter-spacing: 2px; padding: 0 4px; }
+.msg-who.j { color: var(--cyan); }
+.msg-who.u { color: var(--purple); }
+.msg-who.s { color: var(--muted); }
+.msg-text {
+  font-size: 13px; line-height: 1.65; padding: 9px 12px;
+  border-radius: 4px 14px 14px 14px; word-break: break-word;
+}
+.msg-text.j { background: rgba(0,242,255,.06); border: 1px solid rgba(0,242,255,.15); color: var(--text); }
+.msg-text.u { background: rgba(167,139,250,.08); border: 1px solid rgba(167,139,250,.2); color: var(--purple); border-radius: 14px 4px 14px 14px; }
+.msg-text.s { background: rgba(255,255,255,.03); color: var(--muted); font-size: 11px; border-radius: 8px; border: 1px solid rgba(255,255,255,.06); }
+.stream-cursor {
+  display: inline-block; width: 2px; height: 0.9em;
+  background: var(--cyan); margin-left: 2px; vertical-align: text-bottom;
+  animation: cur-blink 0.55s ease-in-out infinite;
+}
+@keyframes cur-blink { 0%,100%{opacity:1} 50%{opacity:0} }
 
-  /* ── Voice button ── */
-  #voice-btn {
-    width: 90px; height: 90px; border-radius: 50%;
-    background: radial-gradient(circle, rgba(0,242,255,0.2), rgba(0,12,24,0.95));
-    border: 2px solid var(--cyan);
-    box-shadow: 0 0 24px rgba(0,242,255,0.4);
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer; transition: all 0.2s; -webkit-tap-highlight-color: transparent;
-    font-size: 32px; user-select: none;
-    animation: pulse-btn 2.5s ease-in-out infinite;
-  }
-  @keyframes pulse-btn {
-    0%,100% { box-shadow: 0 0 24px rgba(0,242,255,0.4); }
-    50%      { box-shadow: 0 0 44px rgba(0,242,255,0.7), 0 0 80px rgba(0,242,255,0.2); }
-  }
-  #voice-btn.listening {
-    background: radial-gradient(circle, rgba(0,242,255,0.4), rgba(0,242,255,0.1));
-    animation: listening-pulse 0.6s ease-in-out infinite alternate;
-  }
-  @keyframes listening-pulse {
-    from { transform: scale(1);    box-shadow: 0 0 30px rgba(0,242,255,0.6); }
-    to   { transform: scale(1.12); box-shadow: 0 0 60px rgba(0,242,255,1); }
-  }
-  #voice-btn:active { transform: scale(0.93); }
+/* ── Voice button ────────────────────────────────────────────────────── */
+#voice-area {
+  flex-shrink: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 8px 0 4px;
+}
+#voice-btn {
+  width: 76px; height: 76px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(0,242,255,.18), rgba(0,12,24,.95));
+  border: 2px solid var(--cyan);
+  box-shadow: 0 0 22px rgba(0,242,255,.35);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: 30px; user-select: none;
+  transition: transform .15s;
+  -webkit-tap-highlight-color: transparent;
+  animation: pb 2.5s ease-in-out infinite;
+}
+@keyframes pb {
+  0%,100%{box-shadow:0 0 22px rgba(0,242,255,.35)}
+  50%{box-shadow:0 0 42px rgba(0,242,255,.65),0 0 70px rgba(0,242,255,.15)}
+}
+#voice-btn.listening {
+  animation: lp .55s ease-in-out infinite alternate;
+}
+@keyframes lp {
+  from{transform:scale(1);box-shadow:0 0 28px rgba(0,242,255,.6)}
+  to{transform:scale(1.1);box-shadow:0 0 55px rgba(0,242,255,1)}
+}
+#voice-btn:active { transform: scale(.9); }
+#voice-btn.disabled { opacity: .35; pointer-events: none; }
+#voice-hint { font-size: 9px; letter-spacing: 2px; color: var(--muted); }
+#https-note {
+  font-size: 9px; color: #fbbf24; letter-spacing: 1px; text-align: center;
+  padding: 4px 16px; display: none;
+}
+#https-note a { color: #fbbf24; }
 
-  #center-row { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-  #voice-hint { font-size: 9px; color: var(--muted); letter-spacing: 2px; }
+/* ── Quick actions ───────────────────────────────────────────────────── */
+#quick {
+  flex-shrink: 0;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 7px;
+  padding: 4px 14px 6px;
+}
+.qbtn {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 11px 6px; text-align: center; cursor: pointer;
+  font-size: 11px; color: var(--text); letter-spacing: .5px;
+  transition: background .12s, border-color .12s;
+  -webkit-tap-highlight-color: transparent; user-select: none;
+}
+.qbtn:active { background: rgba(0,242,255,.1); border-color: var(--cyan); color: var(--cyan); }
+.qbtn.wide { grid-column: span 2; letter-spacing: 2px; font-weight: 700; border-color: rgba(167,139,250,.4); color: var(--purple); }
+.qbtn.wide:active { background: rgba(167,139,250,.12); border-color: var(--purple); }
 
-  /* ── Quick actions ── */
-  #quick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .qbtn {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-    padding: 11px 8px; text-align: center; cursor: pointer;
-    font-size: 11px; color: var(--text); letter-spacing: 1px;
-    transition: background 0.15s, border-color 0.15s;
-    -webkit-tap-highlight-color: transparent; user-select: none;
-  }
-  .qbtn:active { background: rgba(0,242,255,0.1); border-color: var(--cyan); color: var(--cyan); }
-  .signal-btn { border-color: rgba(167,139,250,0.5); color: var(--purple); letter-spacing: 2px; font-weight: 700; }
-  .signal-btn:active { background: rgba(167,139,250,0.15); border-color: var(--purple); }
+/* ── Bottom controls ─────────────────────────────────────────────────── */
+#controls {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 14px 6px;
+}
+#reactor-btn {
+  flex-shrink: 0;
+  background: var(--panel); border: 1px solid rgba(0,242,255,.25); border-radius: 10px;
+  padding: 10px 12px; cursor: pointer; font-size: 10px; letter-spacing: 1px;
+  color: var(--cyan); -webkit-tap-highlight-color: transparent; user-select: none;
+  white-space: nowrap;
+}
+#reactor-btn:active { background: rgba(0,242,255,.12); }
+#tts-btn {
+  flex-shrink: 0;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 10px; cursor: pointer; font-size: 10px; letter-spacing: 1px;
+  color: var(--muted); -webkit-tap-highlight-color: transparent; user-select: none;
+}
+#tts-btn.on { color: var(--cyan); border-color: rgba(0,242,255,.4); }
+#tts-btn:active { background: rgba(0,242,255,.1); }
 
-  /* ── Reactor strip ── */
-  #reactor-strip {
-    display: flex; align-items: center; gap: 8px;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-    padding: 10px 14px;
-  }
-  #reactor-strip .rl { font-size: 9px; letter-spacing: 2px; color: var(--muted); flex: 1; }
-  #reactor-strip .rv { font-size: 10px; letter-spacing: 2px; font-weight: 700; }
-  #reactor-strip .rv.on  { color: var(--cyan); }
-  #reactor-strip .rv.off { color: #fbbf24; }
-  .rtrack {
-    width: 38px; height: 20px; border-radius: 10px; cursor: pointer; position: relative;
-    background: rgba(0,242,255,.08); border: 1px solid rgba(0,242,255,.3); flex-shrink: 0;
-    transition: background .2s;
-  }
-  .rtrack.on { background: rgba(0,242,255,.22); border-color: var(--cyan); }
-  .rthumb {
-    position: absolute; top: 3px; left: 3px; width: 14px; height: 14px;
-    border-radius: 50%; background: var(--muted); transition: transform .2s, background .2s;
-  }
-  .rtrack.on .rthumb { transform: translateX(18px); background: var(--cyan); }
-
-  /* ── Calendar section ── */
-  #cal-section {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-    padding: 10px 14px; display: flex; flex-direction: column; gap: 6px;
-  }
-  #cal-section .ptitle { font-size: 8px; letter-spacing: 3px; color: var(--cyan);
-    border-bottom: 1px solid rgba(0,242,255,.15); padding-bottom: 6px; margin-bottom: 4px; }
-  .cal-row {
-    display: flex; align-items: center; gap: 6px; padding: 5px 0;
-    border-bottom: 1px solid rgba(0,242,255,.07); font-size: 10px;
-  }
-  .cal-row input[type=time], .cal-row input[type=text] {
-    background: transparent; border: none; color: var(--text); font-family: inherit;
-    font-size: 10px; outline: none; flex: 1; min-width: 0;
-  }
-  .cal-row .ct { color: var(--cyan); font-size: 9px; flex-shrink: 0; }
-  #cal-send-btn {
-    width: 100%; padding: 9px; border-radius: 10px; cursor: pointer;
-    background: rgba(0,242,255,.06); border: 1px solid rgba(0,242,255,.3);
-    color: var(--cyan); font-family: 'Courier New', monospace;
-    font-size: 10px; letter-spacing: 2px; transition: background .15s;
-    -webkit-tap-highlight-color: transparent;
-  }
-  #cal-send-btn:active { background: rgba(0,242,255,.18); }
-
-  /* ── Input row ── */
-  #input-row { display: flex; gap: 8px; align-items: center; }
-  #msg-input {
-    flex: 1; background: var(--panel); color: var(--text);
-    border: 1px solid var(--border); border-radius: 24px;
-    padding: 12px 18px; font-size: 13px; font-family: inherit;
-    outline: none; caret-color: var(--cyan);
-  }
-  #msg-input::placeholder { color: var(--muted); }
-  #send-btn {
-    width: 48px; height: 48px; border-radius: 50%;
-    background: var(--cyan); border: none; cursor: pointer;
-    font-size: 18px; color: var(--bg); font-weight: 800;
-    display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 0 14px rgba(0,242,255,0.5);
-    transition: transform 0.15s; -webkit-tap-highlight-color: transparent;
-  }
-  #send-btn:active { transform: scale(0.9); }
-  #send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
-
-  /* ── Streaming cursor ── */
-  .stream-cursor {
-    display: inline-block; width: 2px; height: 0.9em;
-    background: var(--cyan); margin-left: 2px;
-    vertical-align: text-bottom;
-    animation: cur-blink 0.6s ease-in-out infinite;
-  }
-  @keyframes cur-blink { 0%,100%{opacity:1} 50%{opacity:0} }
+/* ── Input row ───────────────────────────────────────────────────────── */
+#input-row {
+  flex-shrink: 0;
+  display: flex; gap: 8px; align-items: center;
+  padding: 6px 14px calc(env(safe-area-inset-bottom,0px) + 8px);
+  border-top: 1px solid var(--border);
+}
+#msg-input {
+  flex: 1; background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 24px;
+  padding: 12px 16px; font-size: 14px; font-family: inherit;
+  outline: none; caret-color: var(--cyan);
+}
+#msg-input::placeholder { color: var(--muted); }
+#msg-input:focus { border-color: rgba(0,242,255,.5); }
+#send-btn {
+  width: 46px; height: 46px; border-radius: 50%; flex-shrink: 0;
+  background: var(--cyan); border: none; cursor: pointer;
+  font-size: 18px; color: var(--bg); font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 14px rgba(0,242,255,.5);
+  transition: transform .12s; -webkit-tap-highlight-color: transparent;
+}
+#send-btn:active { transform: scale(.88); }
+#send-btn:disabled { opacity: .35; cursor: not-allowed; transform: none; }
 </style>
 </head>
 <body>
@@ -176,72 +187,36 @@
   <!-- Top bar -->
   <div id="topbar">
     <div class="brand">J.A.R.V.I.S</div>
-    <div id="conn-wrap">
+    <div class="status-row">
+      <div id="chip-mode">--</div>
       <div class="dot" id="conn-dot"></div>
       <span id="conn-label">CONNECTING</span>
     </div>
   </div>
 
-  <!-- Status chips -->
-  <div id="status-strip">
-    <div class="chip">
-      <div class="chip-label">SERVER</div>
-      <div class="chip-val" id="chip-server">--</div>
-    </div>
-    <div class="chip">
-      <div class="chip-label">MODE</div>
-      <div class="chip-val" id="chip-mode" style="font-size:11px">--</div>
-    </div>
-    <div class="chip">
-      <div class="chip-label">PHONE BAT</div>
-      <div class="chip-val" id="chip-bat">--%</div>
-    </div>
-    <div class="chip" id="tts-chip" onclick="toggleTTS()" style="cursor:pointer;flex:0 0 auto;padding:8px 12px;">
-      <div class="chip-label">VOICE</div>
-      <div class="chip-val" id="tts-val" style="font-size:11px;color:var(--muted)">OFF</div>
-    </div>
-    <div class="chip" onclick="toggleWake()" style="cursor:pointer;flex:0 0 auto;padding:8px 12px;">
-      <div class="chip-label">WAKE</div>
-      <div class="chip-val" id="wake-val" style="font-size:11px;color:var(--muted)">OFF</div>
-    </div>
-    <div class="chip" onclick="learnWakeWord()" style="cursor:pointer;flex:0 0 auto;padding:8px 12px;">
-      <div class="chip-label">LEARN</div>
-      <div class="chip-val" id="learn-val" style="font-size:11px;color:var(--purple)">▶</div>
-    </div>
-  </div>
-
-  <!-- Response feed -->
-  <div id="response-box"><div id="feed"></div></div>
+  <!-- Chat feed -->
+  <div id="feed-wrap"><div id="feed"></div></div>
 
   <!-- Voice button -->
-  <div id="center-row">
-    <div id="voice-btn" id="voice-btn">🎙</div>
+  <div id="voice-area">
+    <div id="voice-btn">🎙</div>
     <div id="voice-hint">HOLD TO SPEAK</div>
-  </div>
-
-  <!-- Reactor power strip -->
-  <div id="reactor-strip">
-    <div class="rl">REACTOR POWER</div>
-    <div class="rv on" id="rval">ONLINE</div>
-    <div class="rtrack on" id="rtrack" onclick="toggleReactor()">
-      <div class="rthumb"></div>
-    </div>
+    <div id="https-note">음성 사용: <a id="https-link" href="#">HTTPS 버전으로 이동</a></div>
   </div>
 
   <!-- Quick actions -->
   <div id="quick">
-    <div class="qbtn" onclick="quickSend('상태 보고')">📊 상태 보고</div>
-    <div class="qbtn" onclick="quickSend('시스템 점검 실시')">⚙️ 시스템 점검</div>
-    <div class="qbtn" onclick="quickSend('날씨 알려줘')">🌤 날씨</div>
-    <div class="qbtn" onclick="resetConv()">🔄 대화 초기화</div>
-    <div class="qbtn signal-btn" onclick="sendTestSignal()" style="grid-column:span 2;">⚡ TEST SIGNAL → HUD</div>
+    <div class="qbtn" onclick="quickSend('상태 보고해')">📊 상태 보고</div>
+    <div class="qbtn" onclick="quickSend('오늘 날씨 어때')">🌤 날씨</div>
+    <div class="qbtn" onclick="quickSend('집중 모드 시작해줘')">🎯 집중 모드</div>
+    <div class="qbtn" onclick="resetConv()">🔄 초기화</div>
+    <div class="qbtn wide" onclick="sendTestSignal()">⚡ HUD 연결 테스트</div>
   </div>
 
-  <!-- Neural Calendar -->
-  <div id="cal-section">
-    <div class="ptitle">NEURAL CALENDAR — TODAY</div>
-    <div id="cal-events"></div>
-    <button id="cal-send-btn" onclick="pushCalendar()">📅 SYNC SCHEDULE → HUD</button>
+  <!-- Controls row -->
+  <div id="controls">
+    <div id="reactor-btn" onclick="toggleReactor()">⚡ REACTOR: ONLINE</div>
+    <div id="tts-btn" onclick="toggleTTS()">🔊 TTS</div>
   </div>
 
   <!-- Text input -->
@@ -252,119 +227,65 @@
   </div>
 
 </div>
-
 <script>
+// ── Connection ────────────────────────────────────────────────────────────────
 const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
-let ws;
-let reactorOn = true;  // true = full power
+const IS_HTTPS = location.protocol === 'https:';
+let ws, reactorOn = true, ttsEnabled = false;
+let _streaming = false, _mediaRec = null, _audioChunks = [], _recMime = '';
 
-// ── Virtual calendar events (editable) ───────────────────────────────────────
-const DEFAULT_EVENTS = [
-  { time: '09:00', title: 'Morning briefing', location: 'Home' },
-  { time: '11:00', title: 'Deep work — JARVIS dev', location: '' },
-  { time: '13:00', title: 'Lunch break', location: '' },
-  { time: '15:00', title: 'Sprint review', location: 'Remote' },
-  { time: '18:00', title: 'Evening system check', location: '' },
-];
-
-function buildCalendarUI() {
-  const today = new Date().toLocaleDateString('ko-KR',{year:'numeric',month:'2-digit',day:'2-digit'});
-  const container = document.getElementById('cal-events');
-  container.innerHTML = '';
-  DEFAULT_EVENTS.forEach((e, i) => {
-    const row = document.createElement('div');
-    row.className = 'cal-row';
-    row.innerHTML =
-      `<span class="ct">${e.time}</span>` +
-      `<input type="text" value="${e.title}" data-idx="${i}" data-field="title" />` +
-      `<input type="text" value="${e.location}" data-idx="${i}" data-field="location"` +
-      ` style="color:var(--muted);font-size:9px;max-width:70px" placeholder="loc" />`;
-    container.appendChild(row);
-  });
-}
-buildCalendarUI();
-
-function getCalendarEvents() {
-  const rows = document.querySelectorAll('.cal-row');
-  const events = [];
-  rows.forEach((row, i) => {
-    const inputs = row.querySelectorAll('input');
-    if (inputs.length >= 2) {
-      events.push({
-        time:     DEFAULT_EVENTS[i]?.time || '',
-        title:    inputs[0].value.trim(),
-        location: inputs[1].value.trim(),
-      });
-    }
-  });
-  return events;
+// ── HTTPS note for voice ──────────────────────────────────────────────────────
+if (!IS_HTTPS) {
+  const note = document.getElementById('https-note');
+  const link = document.getElementById('https-link');
+  note.style.display = 'block';
+  // Replace port 8000 with port 443
+  const httpsUrl = 'https://' + location.hostname + '/remote';
+  link.href = httpsUrl;
+  link.textContent = httpsUrl;
+  document.getElementById('voice-btn').classList.add('disabled');
+  document.getElementById('voice-hint').textContent = 'HTTPS 전용';
 }
 
-function pushCalendar() {
-  if (ws?.readyState !== 1) return;
-  const today = new Date().toLocaleDateString('ko-KR',{year:'numeric',month:'2-digit',day:'2-digit'});
-  const events = getCalendarEvents();
-  ws.send(JSON.stringify({ type: 'calendar_data', date: today, events }));
-  addMsg('SYSTEM', `Schedule pushed to HUD — ${events.length} event(s).`, 'sim');
-}
-
-// ── Battery reporting ──────────────────────────────────────────────────────
-function getBattery() {
-  if (!navigator.getBattery) return;
-  navigator.getBattery().then(b => {
-    const pct = Math.round(b.level * 100);
-    document.getElementById('chip-bat').textContent = pct + '%';
-    document.getElementById('chip-bat').className = 'chip-val' + (pct < 20 ? ' warn' : '');
-    if (ws?.readyState === 1) {
-      ws.send(JSON.stringify({ type: 'remote_status', battery: pct, plugged: b.charging }));
-    }
-    b.addEventListener('levelchange', getBattery);
-    b.addEventListener('chargingchange', getBattery);
-  });
-}
-getBattery();
-
-// ── Feed ──────────────────────────────────────────────────────────────────
+// ── Feed helpers ──────────────────────────────────────────────────────────────
 const feed = document.getElementById('feed');
-const box  = document.getElementById('response-box');
+const feedWrap = document.getElementById('feed-wrap');
 
 function addMsg(who, text, cls) {
-  const d = document.createElement('div');
-  d.className = 'msg';
-  d.innerHTML = `<div class="msg-who ${cls}">${who}</div><div class="msg-text ${cls}">${text}</div>`;
-  feed.appendChild(d);
-  box.scrollTop = box.scrollHeight;
+  const block = document.createElement('div');
+  block.className = 'msg-block';
+  block.innerHTML = `<div class="msg-who ${cls}">${who}</div><div class="msg-text ${cls}">${text}</div>`;
+  feed.appendChild(block);
+  feedWrap.scrollTop = feedWrap.scrollHeight;
 }
 
 function createStreamBubble() {
-  const d    = document.createElement('div'); d.className = 'msg';
-  const who  = document.createElement('div'); who.className = 'msg-who j'; who.textContent = 'JARVIS';
-  const wrap = document.createElement('div'); wrap.className = 'msg-text j';
-  const span = document.createElement('span');
-  const cur  = document.createElement('span'); cur.className = 'stream-cursor';
+  const block = document.createElement('div'); block.className = 'msg-block';
+  const who   = document.createElement('div'); who.className = 'msg-who j'; who.textContent = 'JARVIS';
+  const wrap  = document.createElement('div'); wrap.className = 'msg-text j';
+  const span  = document.createElement('span');
+  const cur   = document.createElement('span'); cur.className = 'stream-cursor';
   wrap.appendChild(span); wrap.appendChild(cur);
-  d.appendChild(who); d.appendChild(wrap);
-  feed.appendChild(d);
-  box.scrollTop = box.scrollHeight;
+  block.appendChild(who); block.appendChild(wrap);
+  feed.appendChild(block);
+  feedWrap.scrollTop = feedWrap.scrollHeight;
   return { span, cur };
 }
 
-// ── WebSocket ─────────────────────────────────────────────────────────────
+// ── WebSocket ─────────────────────────────────────────────────────────────────
 function connect() {
   ws = new WebSocket(WS_URL);
-  const dot   = document.getElementById('conn-dot');
-  const label = document.getElementById('conn-label');
+  const dot = document.getElementById('conn-dot');
+  const lbl = document.getElementById('conn-label');
 
   ws.onopen = () => {
     ws.send(JSON.stringify({ type: 'register', device: 'remote' }));
-    dot.className = 'dot on'; label.textContent = 'ONLINE';
-    document.getElementById('chip-server').textContent = 'OK';
-    getBattery();
+    dot.className = 'dot on'; lbl.textContent = 'ONLINE';
+    reportBattery();
   };
 
   ws.onclose = () => {
-    dot.className = 'dot'; label.textContent = 'RECONNECTING';
-    document.getElementById('chip-server').textContent = '--';
+    dot.className = 'dot'; lbl.textContent = 'OFFLINE';
     setTimeout(connect, 3000);
   };
 
@@ -372,30 +293,41 @@ function connect() {
     const msg = JSON.parse(data);
     if (msg.type === 'connected') {
       const live = !msg.simulation_mode;
-      document.getElementById('chip-mode').textContent = live ? 'LIVE' : 'SIM';
-      document.getElementById('chip-mode').className = 'chip-val' + (live ? '' : ' warn');
+      const m = document.getElementById('chip-mode');
+      m.textContent = live ? 'LIVE' : 'SIM';
+      m.className = live ? '' : 'sim';
       addMsg('JARVIS', 'Neural link established, Sir. Awaiting your command.', 'j');
     } else if (msg.type === 'proactive_alert') {
-      addMsg('ALERT', msg.message, 'sim');
+      addMsg('ALERT', msg.message, 's');
     } else if (msg.type === 'reactor_state') {
-      applyReactorUI(msg.energy_saving);
+      applyReactor(msg.energy_saving);
     }
-    // chat_response from WS is ignored — streaming fetch handles display
   };
 }
 connect();
 
-// ── Send message (streaming) ───────────────────────────────────────────────
-let _streaming = false;
+// ── Battery ───────────────────────────────────────────────────────────────────
+function reportBattery() {
+  if (!navigator.getBattery) return;
+  navigator.getBattery().then(b => {
+    const send = () => {
+      if (ws?.readyState === 1)
+        ws.send(JSON.stringify({ type: 'remote_status', battery: Math.round(b.level*100), plugged: b.charging }));
+    };
+    send();
+    b.addEventListener('levelchange', send);
+    b.addEventListener('chargingchange', send);
+  });
+}
 
+// ── Send (streaming) ──────────────────────────────────────────────────────────
 async function sendMsg(text) {
-  if (!text.trim() || _streaming) return;
+  text = text.trim();
+  if (!text || _streaming) return;
   _streaming = true;
   document.getElementById('send-btn').disabled = true;
 
   addMsg('YOU', text, 'u');
-
-  // Notify HUD that remote is speaking
   if (ws?.readyState === 1)
     ws.send(JSON.stringify({ type: 'remote_speaking', message: text }));
 
@@ -408,47 +340,42 @@ async function sendMsg(text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text }),
     });
-
-    const reader  = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let   buf     = '';
+    const reader = resp.body.getReader();
+    const dec    = new TextDecoder();
+    let   buf    = '';
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      buf += decoder.decode(value, { stream: true });
+      buf += dec.decode(value, { stream: true });
       const parts = buf.split('\n\n');
-      buf = parts.pop(); // keep incomplete tail
-      for (const part of parts) {
-        if (!part.startsWith('data: ')) continue;
+      buf = parts.pop();
+      for (const p of parts) {
+        if (!p.startsWith('data: ')) continue;
         try {
-          const obj = JSON.parse(part.slice(6));
+          const obj = JSON.parse(p.slice(6));
           if (obj.done) { reader.cancel(); break; }
           fullReply += obj.chunk;
           bubble.span.textContent = fullReply;
-          box.scrollTop = box.scrollHeight;
+          feedWrap.scrollTop = feedWrap.scrollHeight;
         } catch {}
       }
     }
-  } catch (err) {
+  } catch {
     fullReply = '통신 오류가 발생했습니다, Sir.';
     bubble.span.textContent = fullReply;
   }
 
-  bubble.cur.remove(); // remove blinking cursor
-  box.scrollTop = box.scrollHeight;
+  bubble.cur.remove();
+  feedWrap.scrollTop = feedWrap.scrollHeight;
 
-  // TTS — read the reply aloud
   speak(fullReply);
 
-  // Relay full reply to HUD via WS
   if (ws?.readyState === 1)
     ws.send(JSON.stringify({ type: 'hud_echo', query: text, message: fullReply }));
 
   _streaming = false;
-  _wakeActive = false;
   document.getElementById('send-btn').disabled = false;
-  if (_wakeEnabled) wakeDetector.resume();
 }
 
 function sendText() {
@@ -462,227 +389,95 @@ function sendText() {
 function quickSend(text) { sendMsg(text); }
 
 function sendTestSignal() {
-  if (ws?.readyState !== 1) return;
+  if (ws?.readyState !== 1) { addMsg('SYSTEM', 'WS 연결이 없습니다.', 's'); return; }
   ws.send(JSON.stringify({ type: 'test_signal' }));
-  addMsg('SYSTEM', 'Test signal fired → HUD.', 'sim');
+  addMsg('SYSTEM', 'Test signal → HUD.', 's');
 }
 
 async function resetConv() {
   await fetch('/reset', { method: 'POST' });
   feed.innerHTML = '';
-  addMsg('SYSTEM', 'Conversation memory cleared, Sir.', 'sim');
+  addMsg('SYSTEM', 'Conversation cleared, Sir.', 's');
 }
 
 document.getElementById('msg-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') sendText();
 });
 
-// ── Reactor toggle ────────────────────────────────────────────────────────────
-function applyReactorUI(energySaving) {
+// ── Reactor ───────────────────────────────────────────────────────────────────
+function applyReactor(energySaving) {
   reactorOn = !energySaving;
-  const track = document.getElementById('rtrack');
-  const val   = document.getElementById('rval');
-  if (track) track.className = 'rtrack' + (energySaving ? '' : ' on');
-  if (val) {
-    val.textContent  = energySaving ? 'SAVING' : 'ONLINE';
-    val.className    = 'rv ' + (energySaving ? 'off' : 'on');
-  }
+  const btn = document.getElementById('reactor-btn');
+  btn.textContent = energySaving ? '⚡ REACTOR: SAVING' : '⚡ REACTOR: ONLINE';
+  btn.style.color  = energySaving ? '#fbbf24' : 'var(--cyan)';
+  btn.style.borderColor = energySaving ? 'rgba(251,191,36,.4)' : 'rgba(0,242,255,.25)';
 }
 
 function toggleReactor() {
-  const newEnergySaving = reactorOn;
+  const newSaving = reactorOn; // reactorOn=true means currently full power, toggling → save
   if (ws?.readyState === 1)
-    ws.send(JSON.stringify({ type: 'reactor_toggle', energy_saving: newEnergySaving }));
-  applyReactorUI(newEnergySaving);
-  addMsg('SYSTEM', newEnergySaving ? 'Energy saving mode ON.' : 'Reactor full power.', 'sim');
+    ws.send(JSON.stringify({ type: 'reactor_toggle', energy_saving: newSaving }));
+  applyReactor(newSaving);
 }
 
-// ── TTS ───────────────────────────────────────────────────────────────────
-let ttsEnabled = false;
-let _ttsAudio  = null;
+// ── TTS ───────────────────────────────────────────────────────────────────────
+let _ttsAudio = null;
 
 function toggleTTS() {
   ttsEnabled = !ttsEnabled;
-  const val = document.getElementById('tts-val');
-  val.textContent  = ttsEnabled ? 'ON' : 'OFF';
-  val.style.color  = ttsEnabled ? 'var(--cyan)' : 'var(--muted)';
+  const btn = document.getElementById('tts-btn');
+  btn.textContent = ttsEnabled ? '🔊 TTS: ON' : '🔊 TTS';
+  btn.className   = ttsEnabled ? 'on' : '';
 }
 
-function _ttsSnippet(text) {
-  // Read first sentence only (up to 120 chars) — keeps TTS snappy
-  const cut = text.match(/^[^.!?\n]{1,120}[.!?]?/);
-  return (cut ? cut[0] : text.slice(0, 120)).trim();
+function _snippet(text) {
+  const m = text.match(/^[^.!?\n]{1,100}[.!?]?/);
+  return (m ? m[0] : text.slice(0, 100)).trim();
 }
 
 async function speak(text) {
   if (!ttsEnabled || !text) return;
   if (_ttsAudio) { _ttsAudio.pause(); _ttsAudio = null; }
-  const snippet = _ttsSnippet(text);
   try {
     const resp = await fetch('/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: snippet }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: _snippet(text) }),
     });
-    if (resp.ok) {
-      const blob = await resp.blob();
-      const url  = URL.createObjectURL(blob);
-      _ttsAudio  = new Audio(url);
-      _ttsAudio.play();
-      _ttsAudio.onended = () => { URL.revokeObjectURL(url); _ttsAudio = null; };
-      return;
-    }
+    if (!resp.ok) return;
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+    _ttsAudio  = new Audio(url);
+    _ttsAudio.play();
+    _ttsAudio.onended = () => { URL.revokeObjectURL(url); _ttsAudio = null; };
   } catch {}
 }
 
-// ── Wake Word ─────────────────────────────────────────────────────────────
-let _wakeEnabled = false;
-let _wakeActive  = false;
-
-// 저장된 웨이크워드 불러오기 (없으면 기본값)
-const _savedWake = localStorage.getItem('jarvis_wake_words');
-const WAKE_WORDS = _savedWake
-  ? JSON.parse(_savedWake)
-  : ['hey jarvis', 'hi jarvis', '자비스야', '자비스', 'jarvis'];
-
-function playBeep() {
-  try {
-    const ctx = new AudioContext();
-    const osc = ctx.createOscillator();
-    const g   = ctx.createGain();
-    osc.connect(g); g.connect(ctx.destination);
-    osc.frequency.value = 880; osc.type = 'sine';
-    g.gain.setValueAtTime(0.25, ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
-    osc.start(); osc.stop(ctx.currentTime + 0.18);
-  } catch {}
-}
-
-const wakeDetector = (() => {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let rec = null, running = false;
-
-  function _build() {
-    rec = new SR();
-    rec.continuous = true; rec.interimResults = true;
-    rec.lang = 'ko-KR'; rec.maxAlternatives = 1;
-
-    rec.onresult = (e) => {
-      const txt = e.results[e.results.length - 1][0].transcript.toLowerCase().trim();
-      // 실시간 SR 표시 (디버그)
-      document.getElementById('wake-val').title = `SR: "${txt}"`;
-      if (_wakeActive || _streaming || _mediaRec) return;
-      if (WAKE_WORDS.some(w => txt.includes(w))) _trigger();
-    };
-    rec.onend   = () => { if (running) { try { rec.start(); } catch {} } };
-    rec.onerror = (ev) => {
-      if (ev.error === 'no-speech') return;
-      if (running) setTimeout(() => { try { rec.start(); } catch {} }, 1200);
-    };
-  }
-
-  async function _trigger() {
-    _wakeActive = true;
-    try { rec.stop(); } catch {}
-    playBeep();
-    voiceBtn.classList.add('listening');
-    hint.textContent = '듣는 중...';
-    await startRecording();
-    setTimeout(() => stopRecording(), 5000);
-  }
-
-  return {
-    start() {
-      if (!SR) return false;
-      running = true; _build();
-      try { rec.start(); } catch {}
-      return true;
-    },
-    stop()   { running = false; try { rec?.stop(); } catch {}; },
-    resume() { if (!running) return; setTimeout(() => { try { rec.start(); } catch {} }, 700); },
-  };
-})();
-
-async function learnWakeWord() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { addMsg('SYSTEM', 'LEARN: 브라우저가 SR을 지원하지 않아요.', 'sim'); return; }
-
-  const lv = document.getElementById('learn-val');
-  lv.textContent = '...'; lv.style.color = '#fbbf24';
-  addMsg('SYSTEM', '웨이크워드를 말해주세요 — SR이 들은 내용이 등록됩니다.', 'sim');
-
-  wakeDetector.stop();
-
-  const heard = await new Promise(resolve => {
-    const rec = new SR();
-    rec.lang = 'ko-KR'; rec.interimResults = false; rec.maxAlternatives = 3;
-    rec.onresult = (e) => {
-      const alts = Array.from(e.results[0]).map(r => r.transcript.toLowerCase().trim());
-      resolve(alts);
-    };
-    rec.onerror = () => resolve([]);
-    rec.start();
-  });
-
-  lv.textContent = '▶'; lv.style.color = 'var(--purple)';
-
-  if (heard.length === 0) {
-    addMsg('SYSTEM', '인식 실패 — 다시 시도해주세요.', 'sim');
-  } else {
-    WAKE_WORDS.length = 0;
-    WAKE_WORDS.push(...heard);
-    localStorage.setItem('jarvis_wake_words', JSON.stringify(heard));
-    addMsg('JARVIS', `웨이크워드 등록 완료: "${heard[0]}", Sir.`, 'j');
-  }
-
-  if (_wakeEnabled) wakeDetector.start();
-}
-
-function toggleWake() {
-  const val = document.getElementById('wake-val');
-  if (!_wakeEnabled) {
-    const ok = wakeDetector.start();
-    if (!ok) { val.textContent = 'N/A'; return; }
-    _wakeEnabled = true;
-    val.textContent = 'ON'; val.style.color = '#22c55e';
-  } else {
-    wakeDetector.stop();
-    _wakeEnabled = false;
-    val.textContent = 'OFF'; val.style.color = 'var(--muted)';
-  }
-}
-
-// ── Voice input (MediaRecorder → Groq Whisper STT) ────────────────────────
-const voiceBtn = document.getElementById('voice-btn');
-const hint     = document.getElementById('voice-hint');
-
-let _mediaRec    = null;
-let _audioChunks = [];
-let _recMime     = '';
+// ── Voice (HTTPS only) ────────────────────────────────────────────────────────
+const voiceBtn  = document.getElementById('voice-btn');
+const voiceHint = document.getElementById('voice-hint');
 
 async function startRecording() {
-  if (_streaming || _mediaRec) return;
+  if (!IS_HTTPS || _streaming || _mediaRec) return;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     _recMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
-             : MediaRecorder.isTypeSupported('audio/mp4')              ? 'audio/mp4'
-             : '';
+             : MediaRecorder.isTypeSupported('audio/mp4')              ? 'audio/mp4' : '';
     _mediaRec    = new MediaRecorder(stream, _recMime ? { mimeType: _recMime } : {});
     _audioChunks = [];
     _mediaRec.ondataavailable = e => { if (e.data.size > 0) _audioChunks.push(e.data); };
     _mediaRec.start();
     voiceBtn.classList.add('listening');
-    hint.textContent = '듣는 중...';
+    voiceHint.textContent = '듣는 중…';
   } catch {
-    hint.textContent = '마이크 권한 필요';
-    setTimeout(() => { hint.textContent = 'HOLD TO SPEAK'; }, 2500);
+    voiceHint.textContent = '마이크 권한 필요';
+    setTimeout(() => { voiceHint.textContent = 'HOLD TO SPEAK'; }, 2500);
   }
 }
 
 async function stopRecording() {
   if (!_mediaRec || _mediaRec.state === 'inactive') return;
   voiceBtn.classList.remove('listening');
-  hint.textContent = '전사 중...';
+  voiceHint.textContent = '전사 중…';
 
   await new Promise(resolve => {
     _mediaRec.onstop = resolve;
@@ -701,22 +496,20 @@ async function stopRecording() {
     const resp = await fetch('/stt', { method: 'POST', body: fd });
     if (!resp.ok) throw new Error(resp.status);
     const { text } = await resp.json();
-    hint.textContent = 'HOLD TO SPEAK';
+    voiceHint.textContent = 'HOLD TO SPEAK';
     if (text) sendMsg(text);
+    else voiceHint.textContent = '인식 실패';
   } catch {
-    hint.textContent = 'STT 오류';
-    setTimeout(() => { hint.textContent = 'HOLD TO SPEAK'; }, 2500);
+    voiceHint.textContent = 'STT 오류';
+    setTimeout(() => { voiceHint.textContent = 'HOLD TO SPEAK'; }, 2500);
   }
 }
 
-if (navigator.mediaDevices?.getUserMedia) {
+if (IS_HTTPS) {
   voiceBtn.addEventListener('touchstart', e => { e.preventDefault(); startRecording(); });
   voiceBtn.addEventListener('touchend',   e => { e.preventDefault(); stopRecording(); });
   voiceBtn.addEventListener('mousedown',  () => startRecording());
   voiceBtn.addEventListener('mouseup',    () => stopRecording());
-} else {
-  hint.textContent = 'VOICE UNAVAILABLE';
-  voiceBtn.style.opacity = '0.4';
 }
 </script>
 </body>
