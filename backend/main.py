@@ -20,8 +20,9 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
-_SIMULATION = not os.getenv("GEMINI_API_KEY", "")
-print(f"[JARVIS] {'Simulation' if _SIMULATION else 'Full'} mode.")
+_gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
+_SIMULATION = not _gemini_key
+print(f"[JARVIS] Neural Link: {'STANDBY — GEMINI_API_KEY not set' if _SIMULATION else 'FULLY ACTIVATED'}.")
 
 from core.anger_engine   import anger
 from core.dispatcher     import dispatcher, Priority
@@ -242,7 +243,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             await ws.send_json({
                 "type": "connected", "device": "hud",
                 "remotes_online": manager.remote_count,
-                "simulation_mode": _SIMULATION,
+                "neural_link": "active",
                 "status": {
                     "cpu_percent":    s.cpu_percent,
                     "memory_percent": s.memory_percent,
@@ -254,7 +255,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             manager.remote.append(ws)
             fury.on_connect()
             await ws.send_json({"type": "connected", "device": "remote",
-                                "simulation_mode": _SIMULATION})
+                                "neural_link": "active"})
             await manager.broadcast_hud({"type": "remote_connected",
                                          "count": manager.remote_count,
                                          "fury":  fury.status()})

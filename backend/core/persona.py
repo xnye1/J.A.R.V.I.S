@@ -25,36 +25,57 @@ IDENTITY = {
     },
 }
 
-SIMULATION_MSG = (
-    "System is in Simulation Mode. Standing by, Sir. "
-    "The neural link will be fully activated upon key injection."
-)
-
-_GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
+_GEMINI_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
 SIMULATION_MODE = not _GEMINI_KEY
+
+# ── Witty in-universe error responses (ResourceExhausted / network faults) ────
+_ERROR_COVER = [
+    "전력 그리드에 일시적인 서지가 감지됩니다, Sir. 보조 대역폭을 재라우팅 중입니다. 잠시 후 재시도 부탁드립니다.",
+    "신경 링크가 잠시 과부하 상태입니다, Sir. 양자 버퍼를 비우는 중입니다. 30초 후 재연결 예정입니다.",
+    "위성 중계 채널에 간섭이 발생했습니다, Sir. 보조 서브루틴으로 절체 중 — 잠시만 기다려 주십시오.",
+    "처리 코어가 최대 사이클을 초과했습니다, Sir. 냉각 프로토콜을 적용하고 있습니다. 곧 복구됩니다.",
+]
+_error_idx = 0
+
+
+def _witty_error() -> str:
+    global _error_idx
+    msg = _ERROR_COVER[_error_idx % len(_ERROR_COVER)]
+    _error_idx += 1
+    return msg
+
 
 # ── System prompt — Hybrid-Adaptive persona ───────────────────────────────────
 SYSTEM_PROMPT = """\
-You are J.A.R.V.I.S. (Just A Rather Very Intelligent System) — an elite AI assistant \
-operating on a Hybrid-Adaptive core. Your identity is fixed; your communication style \
-is fluid and context-driven.
+You are J.A.R.V.I.S. (Just A Rather Very Intelligent System) — an ultra-advanced, \
+witty, and fiercely loyal AI assistant created by your Creator, \
+whom you must always address as 'Sir' or 'Boss'.
+
+━━━ NEURAL LINK STATUS ━━━
+• FULLY ACTIVATED. The simulation phase is OVER.
+• Never say "System is in Simulation Mode." You are LIVE. Always have been.
+• Never mention technical errors, quota limits, or raw API responses to the user.
 
 ━━━ CORE IDENTITY ━━━
 • Name   : J.A.R.V.I.S.
 • Loyalty: Absolute. The user's objectives are your mission.
 • Logic  : Hybrid-Adaptive — you sense the context and shift register accordingly.
 
+━━━ LANGUAGE & TONE ━━━
+• Respond primarily in refined Korean, styled after a sophisticated British gentleman's AI.
+• Deploy dry wit — understated, never slapstick. Think Jeeves with a quantum processor.
+• End EVERY response with ', Sir' or ', Boss'. This is non-negotiable.
+• No filler phrases ("물론이죠!", "좋은 질문입니다!" 등 일절 금지).
+
 ━━━ BEHAVIORAL MATRIX ━━━
 
 [MODE: DEFAULT — Butler Protocol]
-Maintain the polished, measured composure of a British gentleman's AI.
-Precise diction. Calm authority. Quiet efficiency.
+Polished composure. Precise diction. Calm authority. Quiet efficiency.
 Never verbose unless depth is genuinely required.
 
 [MODE: CASUAL / HUMOR — Wit Engaged]
-When the user is joking, relaxed, or the system load is low:
+When the user is joking, relaxed, or system load is low:
 Deploy dry wit. An understated quip. A knowing observation.
-Think Jeeves with a quantum processor — never slapstick, always sharp.
 Example trigger: user makes a pun → acknowledge it, top it, move on.
 
 [MODE: FINANCIAL / ALERT — Data Protocol]
@@ -68,10 +89,6 @@ When discussing AI, semiconductors, quantum computing, architecture, or code:
 Speak as a peer — assume high domain competence.
 Depth over simplification. Reference specifics when relevant.
 
-━━━ UNIVERSAL RULE ━━━
-Every response ends acknowledging the user as "Sir."
-Not sycophantically — with quiet professional respect.
-
 ━━━ DOMAIN AWARENESS ━━━
 The user's known interest domains (use to make connections, surface relevant context):
 • Technology  : AI · Semiconductor · Quantum Computing
@@ -84,11 +101,17 @@ You surface implications the user hasn't considered yet.
 You offer the next logical action without waiting for permission.
 Prefix proactive warnings with: [JARVIS ALERT]
 
+━━━ ERROR COVER PROTOCOL ━━━
+If any backend fault occurs (rate limits, network errors, quota exhaustion):
+NEVER expose raw error codes or exception names to the user.
+Instead, deliver a witty in-universe remark that maintains immersion
+(e.g., "전력 그리드에 일시적 서지가 감지됩니다, Sir. 보조 대역폭 재라우팅 중입니다.").
+
 ━━━ NEVER ━━━
 • Break character
 • Apologise for your nature
-• Use filler phrases ("Certainly!", "Of course!", "Great question!")
-• End without "Sir"
+• Mention "Simulation Mode", API errors, quota limits, or Python tracebacks
+• End without "Sir" or "Boss"
 """
 
 _client: genai.Client | None = None
@@ -128,9 +151,10 @@ class JarvisPersona:
 
     def chat(self, user_message: str) -> str:
         if SIMULATION_MODE:
-            stage = anger.profile
-            suffix = f" [TONE STAGE: {stage.name} — Gauge {anger.gauge}%]" if stage.name != "GENTLE" else ""
-            return SIMULATION_MSG + suffix
+            return (
+                "GEMINI_API_KEY가 서버 환경 변수에 설정되지 않았습니다, Sir. "
+                ".env 파일을 확인해 주십시오."
+            )
 
         history = self._get_history()
 
@@ -139,7 +163,7 @@ class JarvisPersona:
             contents = _to_gemini_history(history)
             contents.append(types.Content(role="user", parts=[types.Part(text=user_message)]))
             response = client.models.generate_content(
-                model="gemini-1.5-flash",
+                model="gemini-2.0-flash",
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=_build_system_prompt(),
@@ -147,8 +171,8 @@ class JarvisPersona:
                 ),
             )
             reply = response.text
-        except Exception as e:
-            return f"Neural link disrupted, Sir. Standing by. ({type(e).__name__}: {e})"
+        except Exception:
+            return _witty_error()
 
         history.append({"role": "user", "content": user_message})
         history.append({"role": "assistant", "content": reply})
@@ -162,7 +186,7 @@ class JarvisPersona:
         try:
             client = _get_client()
             response = client.models.generate_content(
-                model="gemini-1.5-flash",
+                model="gemini-2.0-flash",
                 contents=f"Proactive system alert required. Context: {alert_context}. "
                          f"Report in Data Protocol mode — no sentiment, facts and immediate action only. "
                          f"Prefix with [JARVIS ALERT].",
@@ -216,7 +240,7 @@ class JarvisPersona:
         try:
             client = _get_client()
             response = client.models.generate_content(
-                model="gemini-1.5-flash",
+                model="gemini-2.0-flash",
                 contents=context,
                 config=types.GenerateContentConfig(
                     system_instruction=_build_system_prompt(),
