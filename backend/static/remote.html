@@ -200,6 +200,10 @@
       <div class="chip-label">VOICE</div>
       <div class="chip-val" id="tts-val" style="font-size:11px;color:var(--muted)">OFF</div>
     </div>
+    <div class="chip" onclick="toggleWake()" style="cursor:pointer;flex:0 0 auto;padding:8px 12px;">
+      <div class="chip-label">WAKE</div>
+      <div class="chip-val" id="wake-val" style="font-size:11px;color:var(--muted)">OFF</div>
+    </div>
   </div>
 
   <!-- Response feed -->
@@ -438,7 +442,9 @@ async function sendMsg(text) {
     ws.send(JSON.stringify({ type: 'hud_echo', query: text, message: fullReply }));
 
   _streaming = false;
+  _wakeActive = false;
   document.getElementById('send-btn').disabled = false;
+  if (_wakeEnabled) wakeDetector.resume();
 }
 
 function sendText() {
@@ -523,6 +529,81 @@ async function speak(text) {
       return;
     }
   } catch {}
+}
+
+// ── Wake Word ─────────────────────────────────────────────────────────────
+let _wakeEnabled = false;
+let _wakeActive  = false;
+const WAKE_WORDS  = ['hey jarvis', 'hi jarvis', '자비스야', '자비스야', 'jarvis'];
+
+function playBeep() {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const g   = ctx.createGain();
+    osc.connect(g); g.connect(ctx.destination);
+    osc.frequency.value = 880; osc.type = 'sine';
+    g.gain.setValueAtTime(0.25, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+    osc.start(); osc.stop(ctx.currentTime + 0.18);
+  } catch {}
+}
+
+const wakeDetector = (() => {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null, running = false;
+
+  function _build() {
+    rec = new SR();
+    rec.continuous = true; rec.interimResults = true;
+    rec.lang = 'ko-KR'; rec.maxAlternatives = 1;
+
+    rec.onresult = (e) => {
+      if (_wakeActive || _streaming || _mediaRec) return;
+      const txt = e.results[e.results.length - 1][0].transcript.toLowerCase();
+      if (WAKE_WORDS.some(w => txt.includes(w))) _trigger();
+    };
+    rec.onend   = () => { if (running) { try { rec.start(); } catch {} } };
+    rec.onerror = (ev) => {
+      if (ev.error === 'no-speech') return;
+      if (running) setTimeout(() => { try { rec.start(); } catch {} }, 1200);
+    };
+  }
+
+  async function _trigger() {
+    _wakeActive = true;
+    try { rec.stop(); } catch {}
+    playBeep();
+    voiceBtn.classList.add('listening');
+    hint.textContent = '듣는 중...';
+    await startRecording();
+    setTimeout(() => stopRecording(), 5000);
+  }
+
+  return {
+    start() {
+      if (!SR) return false;
+      running = true; _build();
+      try { rec.start(); } catch {}
+      return true;
+    },
+    stop()   { running = false; try { rec?.stop(); } catch {}; },
+    resume() { if (!running) return; setTimeout(() => { try { rec.start(); } catch {} }, 700); },
+  };
+})();
+
+function toggleWake() {
+  const val = document.getElementById('wake-val');
+  if (!_wakeEnabled) {
+    const ok = wakeDetector.start();
+    if (!ok) { val.textContent = 'N/A'; return; }
+    _wakeEnabled = true;
+    val.textContent = 'ON'; val.style.color = '#22c55e';
+  } else {
+    wakeDetector.stop();
+    _wakeEnabled = false;
+    val.textContent = 'OFF'; val.style.color = 'var(--muted)';
+  }
 }
 
 // ── Voice input (MediaRecorder → Groq Whisper STT) ────────────────────────
