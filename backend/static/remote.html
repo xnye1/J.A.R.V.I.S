@@ -498,14 +498,21 @@ function toggleTTS() {
   val.style.color  = ttsEnabled ? 'var(--cyan)' : 'var(--muted)';
 }
 
+function _ttsSnippet(text) {
+  // Read first sentence only (up to 120 chars) — keeps TTS snappy
+  const cut = text.match(/^[^.!?\n]{1,120}[.!?]?/);
+  return (cut ? cut[0] : text.slice(0, 120)).trim();
+}
+
 async function speak(text) {
   if (!ttsEnabled || !text) return;
   if (_ttsAudio) { _ttsAudio.pause(); _ttsAudio = null; }
+  const snippet = _ttsSnippet(text);
   try {
     const resp = await fetch('/tts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify({ message: snippet }),
     });
     if (resp.ok) {
       const blob = await resp.blob();
@@ -516,13 +523,6 @@ async function speak(text) {
       return;
     }
   } catch {}
-  // Fallback: browser SpeechSynthesis (works without ElevenLabs key)
-  if (window.speechSynthesis) {
-    const utt  = new SpeechSynthesisUtterance(text);
-    utt.lang   = 'ko-KR';
-    utt.rate   = 1.05;
-    window.speechSynthesis.speak(utt);
-  }
 }
 
 // ── Voice input (MediaRecorder → Groq Whisper STT) ────────────────────────
