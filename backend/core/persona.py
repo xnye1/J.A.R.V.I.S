@@ -4,6 +4,7 @@ Conversation history is persisted in Redis when available.
 """
 
 import os
+import time
 import uuid
 from google import genai
 from google.genai import types
@@ -43,6 +44,48 @@ def _witty_error() -> str:
     msg = _ERROR_COVER[_error_idx % len(_ERROR_COVER)]
     _error_idx += 1
     return msg
+
+
+# 429 ResourceExhausted 여부 판별
+def _is_quota_error(e: Exception) -> bool:
+    s = str(e).lower()
+    return "429" in s or "resource_exhausted" in s or "quota" in s
+
+
+def _generate_with_retry(
+    client: genai.Client,
+    contents,
+    system_instruction: str,
+    max_output_tokens: int = 1024,
+    models: list[str] | None = None,
+    max_retries: int = 2,
+) -> str:
+    """Try each model in order; on 429 back-off then retry, fall through to next model."""
+    if models is None:
+        models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b"]
+
+    last_exc: Exception | None = None
+    for model in models:
+        delay = 1.0
+        for attempt in range(max_retries + 1):
+            try:
+                resp = client.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        max_output_tokens=max_output_tokens,
+                    ),
+                )
+                return resp.text
+            except Exception as e:
+                last_exc = e
+                if _is_quota_error(e) and attempt < max_retries:
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    break  # non-quota error or retries exhausted → try next model
+    raise last_exc  # all models failed
 
 
 # ── System prompt — Hybrid-Adaptive persona ───────────────────────────────────
@@ -162,15 +205,9 @@ class JarvisPersona:
             client = _get_client()
             contents = _to_gemini_history(history)
             contents.append(types.Content(role="user", parts=[types.Part(text=user_message)]))
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=_build_system_prompt(),
-                    max_output_tokens=1024,
-                ),
+            reply = _generate_with_retry(
+                client, contents, _build_system_prompt(), max_output_tokens=1024
             )
-            reply = response.text
         except Exception:
             return _witty_error()
 
@@ -185,17 +222,14 @@ class JarvisPersona:
 
         try:
             client = _get_client()
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=f"Proactive system alert required. Context: {alert_context}. "
-                         f"Report in Data Protocol mode — no sentiment, facts and immediate action only. "
-                         f"Prefix with [JARVIS ALERT].",
-                config=types.GenerateContentConfig(
-                    system_instruction=_build_system_prompt(),
-                    max_output_tokens=200,
-                ),
+            prompt = (
+                f"Proactive system alert required. Context: {alert_context}. "
+                f"Report in Data Protocol mode — no sentiment, facts and immediate action only. "
+                f"Prefix with [JARVIS ALERT]."
             )
-            return response.text
+            return _generate_with_retry(
+                client, prompt, _build_system_prompt(), max_output_tokens=200
+            )
         except Exception:
             return f"[JARVIS ALERT] {alert_context}"
 
@@ -239,15 +273,9 @@ class JarvisPersona:
         )
         try:
             client = _get_client()
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=context,
-                config=types.GenerateContentConfig(
-                    system_instruction=_build_system_prompt(),
-                    max_output_tokens=400,
-                ),
+            return _generate_with_retry(
+                client, context, _build_system_prompt(), max_output_tokens=400
             )
-            return response.text
         except Exception:
             return sim_summary
 
