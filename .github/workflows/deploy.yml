@@ -52,9 +52,25 @@ jobs:
       # ── 3.5 Inject environment secrets into server .env ──────────────────────
       - name: Inject env secrets
         run: |
+          touch /tmp/jarvis_inject.env
+
+          GEMINI_KEY='${{ secrets.GEMINI_API_KEY }}'
+          if [ -n "$GEMINI_KEY" ]; then
+            printf 'GEMINI_API_KEY=%s\n' "$GEMINI_KEY" >> /tmp/jarvis_inject.env
+            echo "✅ GEMINI_API_KEY queued"
+          else
+            echo "⚠ GEMINI_API_KEY secret not set — JARVIS will run in simulation mode"
+          fi
+
           EL_KEY='${{ secrets.ELEVENLABS_API_KEY }}'
           if [ -n "$EL_KEY" ]; then
-            printf 'ELEVENLABS_API_KEY=%s\n' "$EL_KEY" > /tmp/jarvis_inject.env
+            printf 'ELEVENLABS_API_KEY=%s\n' "$EL_KEY" >> /tmp/jarvis_inject.env
+            echo "✅ ELEVENLABS_API_KEY queued"
+          else
+            echo "⚠ ELEVENLABS_API_KEY secret not set — voice engine will run in fallback mode"
+          fi
+
+          if [ -s /tmp/jarvis_inject.env ]; then
             scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=~/.ssh/known_hosts \
               /tmp/jarvis_inject.env \
@@ -63,14 +79,12 @@ jobs:
               -o UserKnownHostsFile=~/.ssh/known_hosts \
               ${{ env.SERVER_USER }}@${{ env.SERVER_IP }} \
               "touch ${{ env.DEPLOY_DIR }}/.env && \
+               sed -i '/^GEMINI_API_KEY=/d' ${{ env.DEPLOY_DIR }}/.env && \
                sed -i '/^ELEVENLABS_API_KEY=/d' ${{ env.DEPLOY_DIR }}/.env && \
                cat /tmp/jarvis_inject.env >> ${{ env.DEPLOY_DIR }}/.env && \
                rm /tmp/jarvis_inject.env && \
-               echo '✅ Voice engine key loaded'"
+               echo '✅ Secrets injected into server .env'"
             rm -f /tmp/jarvis_inject.env
-            echo "✅ ELEVENLABS_API_KEY injected into server .env"
-          else
-            echo "⚠ ELEVENLABS_API_KEY secret not set — voice engine will run in fallback mode"
           fi
 
       # ── 4. Rebuild Docker ─────────────────────────────────────────────────────
