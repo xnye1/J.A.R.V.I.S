@@ -54,20 +54,34 @@ jobs:
         run: |
           touch /tmp/jarvis_inject.env
 
+          # ── LLM provider selection ──────────────────────────────────────────
+          GROQ_KEY='${{ secrets.GROQ_API_KEY }}'
+          TOGETHER_KEY='${{ secrets.TOGETHER_API_KEY }}'
           GEMINI_KEY='${{ secrets.GEMINI_API_KEY }}'
-          if [ -n "$GEMINI_KEY" ]; then
+
+          if [ -n "$GROQ_KEY" ]; then
+            printf 'LLM_PROVIDER=groq\n'    >> /tmp/jarvis_inject.env
+            printf 'GROQ_API_KEY=%s\n' "$GROQ_KEY" >> /tmp/jarvis_inject.env
+            echo "✅ GROQ_API_KEY queued (provider=groq)"
+          elif [ -n "$TOGETHER_KEY" ]; then
+            printf 'LLM_PROVIDER=together\n' >> /tmp/jarvis_inject.env
+            printf 'TOGETHER_API_KEY=%s\n' "$TOGETHER_KEY" >> /tmp/jarvis_inject.env
+            echo "✅ TOGETHER_API_KEY queued (provider=together)"
+          elif [ -n "$GEMINI_KEY" ]; then
+            printf 'LLM_PROVIDER=gemini\n'  >> /tmp/jarvis_inject.env
             printf 'GEMINI_API_KEY=%s\n' "$GEMINI_KEY" >> /tmp/jarvis_inject.env
-            echo "✅ GEMINI_API_KEY queued"
+            echo "✅ GEMINI_API_KEY queued (provider=gemini, legacy)"
           else
-            echo "⚠ GEMINI_API_KEY secret not set — JARVIS will run in simulation mode"
+            echo "⚠ No LLM API key set — JARVIS will run in simulation mode"
           fi
 
+          # ── Voice engine ───────────────────────────────────────────────────
           EL_KEY='${{ secrets.ELEVENLABS_API_KEY }}'
           if [ -n "$EL_KEY" ]; then
             printf 'ELEVENLABS_API_KEY=%s\n' "$EL_KEY" >> /tmp/jarvis_inject.env
             echo "✅ ELEVENLABS_API_KEY queued"
           else
-            echo "⚠ ELEVENLABS_API_KEY secret not set — voice engine will run in fallback mode"
+            echo "⚠ ELEVENLABS_API_KEY not set — voice engine in fallback mode"
           fi
 
           if [ -s /tmp/jarvis_inject.env ]; then
@@ -79,7 +93,10 @@ jobs:
               -o UserKnownHostsFile=~/.ssh/known_hosts \
               ${{ env.SERVER_USER }}@${{ env.SERVER_IP }} \
               "touch ${{ env.DEPLOY_DIR }}/.env && \
-               sed -i '/^GEMINI_API_KEY=/d' ${{ env.DEPLOY_DIR }}/.env && \
+               sed -i '/^LLM_PROVIDER=/d'      ${{ env.DEPLOY_DIR }}/.env && \
+               sed -i '/^GROQ_API_KEY=/d'      ${{ env.DEPLOY_DIR }}/.env && \
+               sed -i '/^TOGETHER_API_KEY=/d'  ${{ env.DEPLOY_DIR }}/.env && \
+               sed -i '/^GEMINI_API_KEY=/d'    ${{ env.DEPLOY_DIR }}/.env && \
                sed -i '/^ELEVENLABS_API_KEY=/d' ${{ env.DEPLOY_DIR }}/.env && \
                cat /tmp/jarvis_inject.env >> ${{ env.DEPLOY_DIR }}/.env && \
                rm /tmp/jarvis_inject.env && \

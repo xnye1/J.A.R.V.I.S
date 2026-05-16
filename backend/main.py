@@ -20,9 +20,9 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
-_gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
-_SIMULATION = not _gemini_key
-print(f"[JARVIS] Neural Link: {'STANDBY — GEMINI_API_KEY not set' if _SIMULATION else 'FULLY ACTIVATED'}.")
+import core.llm_client as _llm_cfg
+_SIMULATION = _llm_cfg.SIMULATION_MODE
+print(f"[JARVIS] Neural Link: {'STANDBY — ' + _llm_cfg.PROVIDER.upper() + '_API_KEY not set' if _SIMULATION else 'FULLY ACTIVATED via ' + _llm_cfg.PROVIDER.upper() + ' (' + _llm_cfg.LLM_MODEL + ')'}.")
 
 from core.anger_engine   import anger
 from core.dispatcher     import dispatcher, Priority

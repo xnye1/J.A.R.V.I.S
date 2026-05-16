@@ -1,18 +1,15 @@
 """
 JARVIS persona — Hybrid-Adaptive identity engine.
 Conversation history is persisted in Redis when available.
+LLM calls are delegated to core.llm_client (Groq / Together AI / Gemini).
 """
 
-import os
-import time
 import uuid
-from google import genai
-from google.genai import types
-from dotenv import load_dotenv
+from typing import Iterator
+
 from core import memory
 from core.anger_engine import anger
-
-load_dotenv()
+import core.llm_client as llm
 
 # ── Identity manifest ─────────────────────────────────────────────────────────
 IDENTITY = {
@@ -26,10 +23,9 @@ IDENTITY = {
     },
 }
 
-_GEMINI_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
-SIMULATION_MODE = not _GEMINI_KEY
+SIMULATION_MODE = llm.SIMULATION_MODE
 
-# ── Witty in-universe error responses (ResourceExhausted / network faults) ────
+# ── Witty in-universe error cover ─────────────────────────────────────────────
 _ERROR_COVER = [
     "전력 그리드에 일시적인 서지가 감지됩니다, Sir. 보조 대역폭을 재라우팅 중입니다. 잠시 후 재시도 부탁드립니다.",
     "신경 링크가 잠시 과부하 상태입니다, Sir. 양자 버퍼를 비우는 중입니다. 30초 후 재연결 예정입니다.",
@@ -44,48 +40,6 @@ def _witty_error() -> str:
     msg = _ERROR_COVER[_error_idx % len(_ERROR_COVER)]
     _error_idx += 1
     return msg
-
-
-# 429 ResourceExhausted 여부 판별
-def _is_quota_error(e: Exception) -> bool:
-    s = str(e).lower()
-    return "429" in s or "resource_exhausted" in s or "quota" in s
-
-
-def _generate_with_retry(
-    client: genai.Client,
-    contents,
-    system_instruction: str,
-    max_output_tokens: int = 1024,
-    models: list[str] | None = None,
-    max_retries: int = 2,
-) -> str:
-    """Try each model in order; on 429 back-off then retry, fall through to next model."""
-    if models is None:
-        models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b"]
-
-    last_exc: Exception | None = None
-    for model in models:
-        delay = 1.0
-        for attempt in range(max_retries + 1):
-            try:
-                resp = client.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        max_output_tokens=max_output_tokens,
-                    ),
-                )
-                return resp.text
-            except Exception as e:
-                last_exc = e
-                if _is_quota_error(e) and attempt < max_retries:
-                    time.sleep(delay)
-                    delay *= 2
-                else:
-                    break  # non-quota error or retries exhausted → try next model
-    raise last_exc  # all models failed
 
 
 # ── System prompt — Hybrid-Adaptive persona ───────────────────────────────────
@@ -157,31 +111,14 @@ Instead, deliver a witty in-universe remark that maintains immersion
 • End without "Sir" or "Boss"
 """
 
-_client: genai.Client | None = None
-
-
-def _get_client() -> genai.Client:
-    global _client
-    if _client is None:
-        _client = genai.Client(api_key=_GEMINI_KEY)
-    return _client
-
 
 def _build_system_prompt() -> str:
     return SYSTEM_PROMPT + anger.profile.tone_directive
 
 
-def _to_gemini_history(history: list[dict]) -> list[types.Content]:
-    result = []
-    for msg in history:
-        role = "model" if msg["role"] == "assistant" else "user"
-        result.append(types.Content(role=role, parts=[types.Part(text=msg["content"])]))
-    return result
-
-
 class JarvisPersona:
     def __init__(self, session_id: str | None = None):
-        self.session_id = session_id or str(uuid.uuid4())
+        self.session_id      = session_id or str(uuid.uuid4())
         self._local_history: list[dict] = []
 
     def _get_history(self) -> list[dict]:
@@ -195,40 +132,59 @@ class JarvisPersona:
     def chat(self, user_message: str) -> str:
         if SIMULATION_MODE:
             return (
-                "GEMINI_API_KEY가 서버 환경 변수에 설정되지 않았습니다, Sir. "
+                f"LLM_PROVIDER({llm.PROVIDER})의 API 키가 서버 환경 변수에 설정되지 않았습니다, Sir. "
                 ".env 파일을 확인해 주십시오."
             )
-
         history = self._get_history()
-
+        messages = history + [{"role": "user", "content": user_message}]
         try:
-            client = _get_client()
-            contents = _to_gemini_history(history)
-            contents.append(types.Content(role="user", parts=[types.Part(text=user_message)]))
-            reply = _generate_with_retry(
-                client, contents, _build_system_prompt(), max_output_tokens=1024
-            )
+            reply = llm.generate(messages, system=_build_system_prompt(), max_tokens=1024)
         except Exception:
             return _witty_error()
 
-        history.append({"role": "user", "content": user_message})
+        history.append({"role": "user",      "content": user_message})
         history.append({"role": "assistant", "content": reply})
         self._put_history(history)
         return reply
 
+    def chat_stream(self, user_message: str) -> Iterator[str]:
+        """Streaming version of chat — yields text chunks. Saves history on completion."""
+        if SIMULATION_MODE:
+            yield (
+                f"LLM_PROVIDER({llm.PROVIDER})의 API 키가 설정되지 않았습니다, Sir. "
+                ".env 파일을 확인해 주십시오."
+            )
+            return
+
+        history  = self._get_history()
+        messages = history + [{"role": "user", "content": user_message}]
+        full_reply = ""
+        try:
+            for chunk in llm.stream(messages, system=_build_system_prompt(), max_tokens=1024):
+                full_reply += chunk
+                yield chunk
+        except Exception:
+            cover = _witty_error()
+            yield cover
+            full_reply = cover
+
+        history.append({"role": "user",      "content": user_message})
+        history.append({"role": "assistant", "content": full_reply})
+        self._put_history(history)
+
     def proactive_alert(self, alert_context: str) -> str:
         if SIMULATION_MODE:
             return f"[JARVIS ALERT] {alert_context}"
-
+        prompt = (
+            f"Proactive system alert required. Context: {alert_context}. "
+            f"Report in Data Protocol mode — no sentiment, facts and immediate action only. "
+            f"Prefix with [JARVIS ALERT]."
+        )
         try:
-            client = _get_client()
-            prompt = (
-                f"Proactive system alert required. Context: {alert_context}. "
-                f"Report in Data Protocol mode — no sentiment, facts and immediate action only. "
-                f"Prefix with [JARVIS ALERT]."
-            )
-            return _generate_with_retry(
-                client, prompt, _build_system_prompt(), max_output_tokens=200
+            return llm.generate(
+                [{"role": "user", "content": prompt}],
+                system=_build_system_prompt(),
+                max_tokens=200,
             )
         except Exception:
             return f"[JARVIS ALERT] {alert_context}"
@@ -242,8 +198,8 @@ class JarvisPersona:
         topics    = briefing.get("critical_topics", [])
         dur_days  = briefing.get("duration_days", 1)
 
-        top_goal   = goals[0]["title"] if goals else "목표 미설정"
-        top_goal_p = goals[0]["progress"] if goals else 0
+        top_goal   = goals[0]["title"]    if goals  else "목표 미설정"
+        top_goal_p = goals[0]["progress"] if goals  else 0
         weak_str   = ", ".join(f"{t['subject']} ({t['topic']})" for t in topics[:2]) or "없음"
 
         sim_summary = (
@@ -272,9 +228,10 @@ class JarvisPersona:
             f"Prefix with 'WEEKLY DIGEST  ·  최근 {sessions}일 기록' and a separator line."
         )
         try:
-            client = _get_client()
-            return _generate_with_retry(
-                client, context, _build_system_prompt(), max_output_tokens=400
+            return llm.generate(
+                [{"role": "user", "content": context}],
+                system=_build_system_prompt(),
+                max_tokens=400,
             )
         except Exception:
             return sim_summary

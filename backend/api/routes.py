@@ -13,7 +13,10 @@ import os
 
 log = logging.getLogger("jarvis.routes")
 
+import json
+
 from fastapi import APIRouter, Header, HTTPException
+from fastapi.responses import StreamingResponse
 
 from api.models import (
     AlertRequest,
@@ -37,8 +40,9 @@ from core.system_info   import get_detailed_status, to_dict as status_to_dict
 from system.monitor     import get_current_status
 
 router  = APIRouter()
-_SIM    = not os.getenv("GEMINI_API_KEY", "")
 jarvis  = JarvisPersona()
+
+from core.persona import SIMULATION_MODE as _SIM
 
 # Injected by main.py after ConnectionManager is created
 _manager    = None
@@ -97,6 +101,38 @@ async def chat(req: ChatRequest):
 async def reset_conversation():
     jarvis.reset_conversation()
     return {"status": "conversation reset"}
+
+
+@router.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """
+    SSE streaming endpoint.
+    Each chunk is sent as:  data: {"chunk": "..."}\n\n
+    Final frame:            data: {"done": true}\n\n
+
+    JS example:
+      const resp = await fetch('/chat/stream', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({message: 'hello'})});
+      const reader = resp.body.getReader();
+      // read chunks until done
+    """
+    if not req.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty, Sir.")
+
+    def _sse_generator():
+        for chunk in jarvis.chat_stream(req.message):
+            yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True})}\n\n"
+
+    return StreamingResponse(
+        _sse_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ── Reactor ───────────────────────────────────────────────────────────────────
