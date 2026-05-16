@@ -7,7 +7,10 @@ All REST logic lives in api/routes.py. All state in core/state.py.
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
+import re
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -46,15 +49,17 @@ STATIC = Path(__file__).parent / "static"
 # ── Connection Manager ────────────────────────────────────────────────────────
 
 class ConnectionManager:
-    """Tracks HUD and Remote WebSocket connections."""
+    """Tracks HUD, Remote, and Streaming WebSocket connections."""
 
     def __init__(self) -> None:
-        self.hud:    list[WebSocket] = []
-        self.remote: list[WebSocket] = []
+        self.hud:       list[WebSocket] = []
+        self.remote:    list[WebSocket] = []
+        self.streaming: list[WebSocket] = []   # /ws/stream iPhone clients
 
     def _drop(self, ws: WebSocket) -> None:
-        self.hud    = [c for c in self.hud    if c is not ws]
-        self.remote = [c for c in self.remote if c is not ws]
+        self.hud       = [c for c in self.hud       if c is not ws]
+        self.remote    = [c for c in self.remote    if c is not ws]
+        self.streaming = [c for c in self.streaming if c is not ws]
 
     async def _send(self, ws: WebSocket, payload: dict) -> None:
         try:
@@ -70,8 +75,12 @@ class ConnectionManager:
         for ws in list(self.remote):
             await self._send(ws, payload)
 
+    async def broadcast_streaming(self, payload: dict) -> None:
+        for ws in list(self.streaming):
+            await self._send(ws, payload)
+
     async def broadcast_all(self, payload: dict) -> None:
-        for ws in list(self.hud + self.remote):
+        for ws in list(self.hud + self.remote + self.streaming):
             await self._send(ws, payload)
 
     @property
@@ -79,6 +88,9 @@ class ConnectionManager:
 
     @property
     def hud_count(self) -> int: return len(self.hud)
+
+    @property
+    def streaming_count(self) -> int: return len(self.streaming)
 
 
 # ── Singletons ────────────────────────────────────────────────────────────────
@@ -97,9 +109,11 @@ async def _on_alert(alert_text: str, _status) -> None:
     reply = jarvis.proactive_alert(alert_text)
     await dispatcher.emit({"type": "proactive_alert", "message": reply}, Priority.HIGH)
     await dispatcher.emit({"type": "orb_react", "intensity": 0.9, "duration": 3000}, Priority.HIGH)
-    # Mirror alert to phone remotes
+    # Mirror alert to phone remotes and iPhone streaming clients
     if manager.remote_count > 0:
         await manager.broadcast_remote({"type": "proactive_alert", "message": reply})
+    if manager.streaming_count > 0:
+        await manager.broadcast_streaming({"type": "proactive_alert", "message": reply})
 
 proactive_engine = ProactiveEngine(on_alert=_on_alert)
 
@@ -114,7 +128,7 @@ async def _status_broadcaster() -> None:
         now = time.monotonic()
         if now - last_at < interval:
             continue
-        if manager.hud_count == 0 and manager.remote_count == 0:
+        if manager.hud_count == 0 and manager.remote_count == 0 and manager.streaming_count == 0:
             continue
         last_at = now
         s  = get_detailed_status()
@@ -160,6 +174,17 @@ async def _status_broadcaster() -> None:
             "ram":      s.memory_percent,
             "disk":     s.disk_percent,
         })
+
+        # Push laptop stats to iPhone streaming clients
+        if manager.streaming_count > 0:
+            await manager.broadcast_streaming({
+                "type":    "laptop_status",
+                "cpu":     s.cpu_percent,
+                "ram":     s.memory_percent,
+                "bat":     s.battery_percent,
+                "plugged": s.battery_plugged,
+                "disk":    s.disk_percent,
+            })
 
 
 # ── Mock service report broadcaster ──────────────────────────────────────────
@@ -398,3 +423,187 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             fury.on_disconnect()
             await manager.broadcast_hud({"type": "remote_disconnected",
                                          "count": manager.remote_count})
+
+
+# ── /ws/stream — iPhone full-duplex streaming endpoint ───────────────────────
+
+async def _transcribe(audio_bytes: bytes, mime: str = "audio/webm") -> str:
+    """Run Groq Whisper STT on raw audio bytes. Blocking — called via thread."""
+    groq_key = os.getenv("GROQ_API_KEY", "")
+    if not groq_key:
+        return ""
+    try:
+        from openai import OpenAI
+        ext = "mp4" if "mp4" in mime else "webm"
+        client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
+        result = client.audio.transcriptions.create(
+            file=(f"voice.{ext}", audio_bytes, mime),
+            model="whisper-large-v3-turbo",
+            language="ko",
+        )
+        return result.text.strip()
+    except Exception as exc:
+        print(f"[STT] error: {exc}")
+        return ""
+
+
+async def _run_pipeline(ws: WebSocket, user_message: str) -> None:
+    """
+    Full streaming pipeline for iPhone:
+      1. Stream LLM tokens → ws text_chunk events (real-time typing effect)
+      2. Sentence-level ElevenLabs TTS → ws audio_chunk events (queued playback)
+      3. Mirror final reply to HUD via dispatcher
+    """
+    from core.voice_bridge import synthesize
+
+    loop          = asyncio.get_event_loop()
+    token_queue:  asyncio.Queue = asyncio.Queue()
+    sentence_buf  = ""
+    full_text     = ""
+    tts_tasks: list[asyncio.Task] = []
+
+    # ── ElevenLabs TTS sender (async, runs concurrently with LLM) ────────────
+    async def _tts_send(text: str) -> None:
+        audio = await synthesize(text)
+        if audio:
+            try:
+                await ws.send_json({
+                    "type": "audio_chunk",
+                    "data": base64.b64encode(audio).decode(),
+                    "mime": "audio/mpeg",
+                })
+            except Exception:
+                pass
+
+    # ── LLM token producer (sync iterator → async queue via thread) ──────────
+    def _produce_tokens() -> None:
+        try:
+            for chunk in jarvis.chat_stream(user_message):
+                loop.call_soon_threadsafe(token_queue.put_nowait, chunk)
+        except Exception:
+            pass
+        finally:
+            loop.call_soon_threadsafe(token_queue.put_nowait, None)  # sentinel
+
+    threading.Thread(target=_produce_tokens, daemon=True).start()
+
+    await ws.send_json({"type": "stream_start", "query": user_message})
+
+    # ── Consume tokens — stream text, batch sentences for TTS ────────────────
+    while True:
+        chunk = await token_queue.get()
+        if chunk is None:
+            break
+        full_text    += chunk
+        sentence_buf += chunk
+        try:
+            await ws.send_json({"type": "text_chunk", "chunk": chunk})
+        except Exception:
+            return
+
+        # Fire TTS when a complete sentence boundary is found
+        if re.search(r'[.!?。]\s', sentence_buf) or sentence_buf.count('\n') > 0:
+            parts    = re.split(r'(?<=[.!?。])\s+|\n+', sentence_buf)
+            complete = parts[:-1]
+            sentence_buf = parts[-1]
+            for s in complete:
+                s = s.strip()
+                if len(s) > 3:
+                    tts_tasks.append(asyncio.create_task(_tts_send(s)))
+
+    # Synthesize remaining fragment
+    if sentence_buf.strip() and len(sentence_buf.strip()) > 3:
+        tts_tasks.append(asyncio.create_task(_tts_send(sentence_buf.strip())))
+
+    # Signal text stream done
+    try:
+        await ws.send_json({"type": "text_done", "full": full_text})
+    except Exception:
+        return
+
+    # Wait for all TTS tasks before sending stream_done
+    if tts_tasks:
+        await asyncio.gather(*tts_tasks, return_exceptions=True)
+
+    try:
+        await ws.send_json({"type": "stream_done"})
+    except Exception:
+        return
+
+    # Mirror to HUD
+    await dispatcher.emit({"type": "chat_response", "query": user_message,
+                           "message": full_text}, Priority.HIGH)
+    await dispatcher.emit({"type": "orb_react", "intensity": 1.0, "duration": 3000},
+                          Priority.HIGH)
+    state.increment_messages()
+
+
+@app.websocket("/ws/stream")
+async def stream_endpoint(ws: WebSocket) -> None:
+    """
+    Full-duplex iPhone streaming WebSocket.
+
+    Client → Server:
+      Binary frame          : raw audio (webm/mp4) → STT → LLM pipeline
+      {"type":"text","message":"..."} : text input → LLM pipeline
+      {"type":"ping"}                 : keep-alive
+
+    Server → Client:
+      {"type":"connected","mode":"LIVE|SIM"}
+      {"type":"stt_result","text":"..."}          — transcription result
+      {"type":"stream_start","query":"..."}       — LLM starting
+      {"type":"text_chunk","chunk":"..."}         — LLM token
+      {"type":"text_done","full":"..."}           — LLM complete
+      {"type":"audio_chunk","data":"<b64>","mime":"audio/mpeg"} — TTS sentence
+      {"type":"stream_done"}                      — everything complete
+      {"type":"laptop_status",...}                — 5-s telemetry
+      {"type":"proactive_alert","message":"..."}  — server-push alerts
+      {"type":"pong"}
+    """
+    await ws.accept()
+    manager.streaming.append(ws)
+
+    try:
+        await ws.send_json({
+            "type":     "connected",
+            "mode":     "SIM" if _SIMULATION else "LIVE",
+            "provider": _llm_cfg.PROVIDER,
+            "model":    _llm_cfg.LLM_MODEL,
+        })
+
+        while True:
+            msg = await ws.receive()
+
+            # ── Binary frame: raw audio from MediaRecorder ─────────────────
+            if "bytes" in msg and msg["bytes"]:
+                audio_bytes = msg["bytes"]
+                await ws.send_json({"type": "stt_processing"})
+                text = await asyncio.to_thread(_transcribe, audio_bytes, "audio/webm")
+                if not text:
+                    await ws.send_json({"type": "stt_result", "text": "",
+                                        "error": "인식 실패 — 다시 말씀해 주세요."})
+                    continue
+                await ws.send_json({"type": "stt_result", "text": text})
+                from core.device_context import device_ctx
+                device_ctx.update_phone({"last_utterance": text})
+                await _run_pipeline(ws, text)
+
+            # ── JSON text frame ────────────────────────────────────────────
+            elif "text" in msg and msg["text"]:
+                data     = __import__("json").loads(msg["text"])
+                msg_type = data.get("type")
+
+                if msg_type == "text":
+                    text = data.get("message", "").strip()
+                    if text:
+                        await _run_pipeline(ws, text)
+
+                elif msg_type == "phone_status":
+                    from core.device_context import device_ctx
+                    device_ctx.update_phone(data)
+
+                elif msg_type == "ping":
+                    await ws.send_json({"type": "pong"})
+
+    except WebSocketDisconnect:
+        manager._drop(ws)
