@@ -204,6 +204,10 @@
       <div class="chip-label">WAKE</div>
       <div class="chip-val" id="wake-val" style="font-size:11px;color:var(--muted)">OFF</div>
     </div>
+    <div class="chip" onclick="learnWakeWord()" style="cursor:pointer;flex:0 0 auto;padding:8px 12px;">
+      <div class="chip-label">LEARN</div>
+      <div class="chip-val" id="learn-val" style="font-size:11px;color:var(--purple)">▶</div>
+    </div>
   </div>
 
   <!-- Response feed -->
@@ -534,7 +538,12 @@ async function speak(text) {
 // ── Wake Word ─────────────────────────────────────────────────────────────
 let _wakeEnabled = false;
 let _wakeActive  = false;
-const WAKE_WORDS  = ['hey jarvis', 'hi jarvis', '자비스야', '자비스야', 'jarvis'];
+
+// 저장된 웨이크워드 불러오기 (없으면 기본값)
+const _savedWake = localStorage.getItem('jarvis_wake_words');
+const WAKE_WORDS = _savedWake
+  ? JSON.parse(_savedWake)
+  : ['hey jarvis', 'hi jarvis', '자비스야', '자비스', 'jarvis'];
 
 function playBeep() {
   try {
@@ -559,8 +568,10 @@ const wakeDetector = (() => {
     rec.lang = 'ko-KR'; rec.maxAlternatives = 1;
 
     rec.onresult = (e) => {
+      const txt = e.results[e.results.length - 1][0].transcript.toLowerCase().trim();
+      // 실시간 SR 표시 (디버그)
+      document.getElementById('wake-val').title = `SR: "${txt}"`;
       if (_wakeActive || _streaming || _mediaRec) return;
-      const txt = e.results[e.results.length - 1][0].transcript.toLowerCase();
       if (WAKE_WORDS.some(w => txt.includes(w))) _trigger();
     };
     rec.onend   = () => { if (running) { try { rec.start(); } catch {} } };
@@ -591,6 +602,41 @@ const wakeDetector = (() => {
     resume() { if (!running) return; setTimeout(() => { try { rec.start(); } catch {} }, 700); },
   };
 })();
+
+async function learnWakeWord() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { addMsg('SYSTEM', 'LEARN: 브라우저가 SR을 지원하지 않아요.', 'sim'); return; }
+
+  const lv = document.getElementById('learn-val');
+  lv.textContent = '...'; lv.style.color = '#fbbf24';
+  addMsg('SYSTEM', '웨이크워드를 말해주세요 — SR이 들은 내용이 등록됩니다.', 'sim');
+
+  wakeDetector.stop();
+
+  const heard = await new Promise(resolve => {
+    const rec = new SR();
+    rec.lang = 'ko-KR'; rec.interimResults = false; rec.maxAlternatives = 3;
+    rec.onresult = (e) => {
+      const alts = Array.from(e.results[0]).map(r => r.transcript.toLowerCase().trim());
+      resolve(alts);
+    };
+    rec.onerror = () => resolve([]);
+    rec.start();
+  });
+
+  lv.textContent = '▶'; lv.style.color = 'var(--purple)';
+
+  if (heard.length === 0) {
+    addMsg('SYSTEM', '인식 실패 — 다시 시도해주세요.', 'sim');
+  } else {
+    WAKE_WORDS.length = 0;
+    WAKE_WORDS.push(...heard);
+    localStorage.setItem('jarvis_wake_words', JSON.stringify(heard));
+    addMsg('JARVIS', `웨이크워드 등록 완료: "${heard[0]}", Sir.`, 'j');
+  }
+
+  if (_wakeEnabled) wakeDetector.start();
+}
 
 function toggleWake() {
   const val = document.getElementById('wake-val');
