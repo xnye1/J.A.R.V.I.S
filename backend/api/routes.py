@@ -106,18 +106,31 @@ async def reset_conversation():
 @router.post("/tts")
 async def text_to_speech(req: ChatRequest):
     """
-    Convert text to speech via ElevenLabs.
-    Returns audio/mpeg stream. Falls back to 503 if key not set.
+    Convert text to speech.
+    Priority: ElevenLabs (high quality) → gTTS (Google, free fallback).
+    Always returns audio/mpeg.
     """
-    from core.voice_bridge import synthesize
+    import io
     from fastapi.responses import Response
+    from core.voice_bridge import synthesize
 
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Text is empty.")
+
+    # 1. Try ElevenLabs
     audio = await synthesize(req.message)
-    if audio is None:
-        raise HTTPException(status_code=503, detail="TTS unavailable — ELEVENLABS_API_KEY not set.")
-    return Response(content=audio, media_type="audio/mpeg")
+    if audio:
+        return Response(content=audio, media_type="audio/mpeg")
+
+    # 2. Fallback: gTTS (free, no API key required)
+    try:
+        from gtts import gTTS
+        buf = io.BytesIO()
+        gTTS(text=req.message, lang="ko", slow=False).write_to_fp(buf)
+        buf.seek(0)
+        return Response(content=buf.read(), media_type="audio/mpeg")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"TTS unavailable: {exc}")
 
 
 @router.post("/stt")
