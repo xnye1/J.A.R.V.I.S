@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
 import re
 import threading
@@ -427,21 +428,24 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
 # ── /ws/stream — iPhone full-duplex streaming endpoint ───────────────────────
 
-async def _transcribe(audio_bytes: bytes, mime: str = "audio/webm") -> str:
-    """Run Groq Whisper STT on raw audio bytes. Blocking — called via thread."""
+def _transcribe(audio_bytes: bytes, mime: str = "audio/webm") -> str:
+    """Groq Whisper STT — synchronous blocking call, run via asyncio.to_thread."""
     groq_key = os.getenv("GROQ_API_KEY", "")
     if not groq_key:
+        print("[STT] GROQ_API_KEY not set")
         return ""
     try:
         from openai import OpenAI
-        ext = "mp4" if "mp4" in mime else "webm"
+        ext    = "mp4" if "mp4" in mime else "webm"
         client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
         result = client.audio.transcriptions.create(
             file=(f"voice.{ext}", audio_bytes, mime),
             model="whisper-large-v3-turbo",
             language="ko",
         )
-        return result.text.strip()
+        text = result.text.strip()
+        print(f"[STT] transcribed: {text[:80]}")
+        return text
     except Exception as exc:
         print(f"[STT] error: {exc}")
         return ""
@@ -590,7 +594,7 @@ async def stream_endpoint(ws: WebSocket) -> None:
 
             # ── JSON text frame ────────────────────────────────────────────
             elif "text" in msg and msg["text"]:
-                data     = __import__("json").loads(msg["text"])
+                data     = json.loads(msg["text"])
                 msg_type = data.get("type")
 
                 if msg_type == "text":
