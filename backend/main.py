@@ -91,13 +91,15 @@ registry = ServiceRegistry(dispatcher, state)
 async def _on_alert(alert_text: str, _status) -> None:
     route = decide_output()
     if route.mode in (OutputMode.SILENT, OutputMode.STANDBY):
-        # Muted: visual ghost overlay still active, no voice/text interruption
         _mute_log = f"[Mute] Proactive alert suppressed ({route.reason}): {alert_text[:60]}"
         print(_mute_log)
         return
     reply = jarvis.proactive_alert(alert_text)
     await dispatcher.emit({"type": "proactive_alert", "message": reply}, Priority.HIGH)
     await dispatcher.emit({"type": "orb_react", "intensity": 0.9, "duration": 3000}, Priority.HIGH)
+    # Mirror alert to phone remotes
+    if manager.remote_count > 0:
+        await manager.broadcast_remote({"type": "proactive_alert", "message": reply})
 
 proactive_engine = ProactiveEngine(on_alert=_on_alert)
 
@@ -110,7 +112,9 @@ async def _status_broadcaster() -> None:
         await asyncio.sleep(5)
         interval = 600 if state.energy_saving else 5
         now = time.monotonic()
-        if now - last_at < interval or manager.hud_count == 0:
+        if now - last_at < interval:
+            continue
+        if manager.hud_count == 0 and manager.remote_count == 0:
             continue
         last_at = now
         s  = get_detailed_status()
@@ -134,6 +138,18 @@ async def _status_broadcaster() -> None:
                 "energy_saving":   state.energy_saving,
             },
         }, Priority.NORMAL)
+
+        # Push laptop stats to phone remotes for real-time sync
+        if manager.remote_count > 0:
+            await manager.broadcast_remote({
+                "type":    "laptop_status",
+                "cpu":     s.cpu_percent,
+                "ram":     s.memory_percent,
+                "bat":     s.battery_percent,
+                "plugged": s.battery_plugged,
+                "disk":    s.disk_percent,
+                "alerts":  pa.alerts,
+            })
 
 
 # ── Mock service report broadcaster ──────────────────────────────────────────

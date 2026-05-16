@@ -77,6 +77,21 @@ html, body {
 }
 @keyframes cur-blink { 0%,100%{opacity:1} 50%{opacity:0} }
 
+/* ── Laptop stats strip ──────────────────────────────────────────────── */
+#laptop-stats {
+  flex-shrink: 0;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+  padding: 0 14px;
+}
+.stat-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 7px 6px; text-align: center;
+}
+.stat-label { font-size: 7px; letter-spacing: 2px; color: var(--muted); }
+.stat-val   { font-size: 15px; font-weight: 700; color: var(--cyan); margin-top: 2px; }
+.stat-val.warn  { color: var(--alert); }
+.stat-val.ok    { color: var(--green); }
+
 /* ── Voice button ────────────────────────────────────────────────────── */
 #voice-area {
   flex-shrink: 0;
@@ -197,6 +212,26 @@ html, body {
   <!-- Chat feed -->
   <div id="feed-wrap"><div id="feed"></div></div>
 
+  <!-- Laptop stats -->
+  <div id="laptop-stats">
+    <div class="stat-card">
+      <div class="stat-label">CPU</div>
+      <div class="stat-val" id="ls-cpu">--%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">RAM</div>
+      <div class="stat-val" id="ls-ram">--%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">LAPTOP</div>
+      <div class="stat-val" id="ls-bat">--%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">DISK</div>
+      <div class="stat-val" id="ls-disk">--%</div>
+    </div>
+  </div>
+
   <!-- Voice button -->
   <div id="voice-area">
     <div id="voice-btn">🎙</div>
@@ -303,9 +338,11 @@ function connect() {
       m.className = live ? '' : 'sim';
       addMsg('JARVIS', 'Neural link established, Sir. Awaiting your command.', 'j');
     } else if (msg.type === 'proactive_alert') {
-      addMsg('ALERT', msg.message, 's');
+      addMsg('⚠ ALERT', msg.message, 's');
     } else if (msg.type === 'reactor_state') {
       applyReactor(msg.energy_saving);
+    } else if (msg.type === 'laptop_status') {
+      updateLaptopStats(msg);
     }
   };
 }
@@ -323,6 +360,24 @@ function reportBattery() {
     b.addEventListener('levelchange', send);
     b.addEventListener('chargingchange', send);
   });
+}
+
+// ── Laptop stats ──────────────────────────────────────────────────────────────
+function updateLaptopStats(d) {
+  const set = (id, val, warnThreshold) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = val + '%';
+    el.className = 'stat-val' + (val >= warnThreshold ? ' warn' : val < warnThreshold - 30 ? ' ok' : '');
+  };
+  set('ls-cpu',  d.cpu,  85);
+  set('ls-ram',  d.ram,  90);
+  set('ls-disk', d.disk, 90);
+  const batEl = document.getElementById('ls-bat');
+  if (batEl) {
+    batEl.textContent = d.bat + (d.plugged ? '%⚡' : '%');
+    batEl.className   = 'stat-val' + (d.bat < 20 ? ' warn' : '');
+  }
 }
 
 // ── Send (streaming) ──────────────────────────────────────────────────────────
