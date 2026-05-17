@@ -364,6 +364,10 @@ function onMsg(msg) {
       addMsg('JARVIS', msg.text, 'j');
       break;
 
+    case 'agent_progress':
+      sttLine(msg.message);
+      break;
+
     case 'school_update':
       updateWeather(msg);
       break;

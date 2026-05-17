@@ -65,6 +65,25 @@ def generate(messages: list[dict], system: str = "", max_tokens: int = 1024) -> 
     return _gemini_generate(messages, system, max_tokens)
 
 
+def generate_with_tools(
+    messages: list[dict],
+    tools: list[dict],
+    system: str = "",
+    max_tokens: int = 2048,
+) -> dict:
+    """
+    Blocking tool-calling completion.
+    Returns dict:
+      {"content": str, "tool_calls": None}            — final text answer
+      {"content": None, "tool_calls": list, "raw_message": dict}  — wants to call tools
+    """
+    if not _cfg:
+        # Gemini path: tool calling not yet wired — fall back to plain generate
+        text = _gemini_generate(messages, system, max_tokens)
+        return {"content": text, "tool_calls": None}
+    return _oai_generate_with_tools(messages, tools, system, max_tokens)
+
+
 def stream(
     messages: list[dict], system: str = "", max_tokens: int = 1024
 ) -> Iterator[str]:
@@ -103,6 +122,43 @@ def _oai_generate(messages: list[dict], system: str, max_tokens: int) -> str:
             if _is_rate_limit(e) and attempt < 2:
                 time.sleep(delay)
                 delay *= 2
+            else:
+                break
+    raise last_exc  # type: ignore[misc]
+
+
+def _oai_generate_with_tools(
+    messages: list[dict], tools: list[dict], system: str, max_tokens: int
+) -> dict:
+    client = _get_openai_client()
+    msgs   = _build_messages(messages, system)
+    last_exc: Exception | None = None
+    delay = 1.0
+    for attempt in range(3):
+        try:
+            resp  = client.chat.completions.create(
+                model=LLM_MODEL, messages=msgs, tools=tools,
+                tool_choice="auto", max_tokens=max_tokens,
+            )
+            choice = resp.choices[0]
+            msg    = choice.message
+            if msg.tool_calls:
+                return {
+                    "content":     msg.content,
+                    "tool_calls":  msg.tool_calls,
+                    "raw_message": {"role": "assistant", "content": msg.content,
+                                    "tool_calls": [
+                                        {"id": tc.id, "type": "function",
+                                         "function": {"name": tc.function.name,
+                                                      "arguments": tc.function.arguments}}
+                                        for tc in msg.tool_calls
+                                    ]},
+                }
+            return {"content": msg.content or "", "tool_calls": None}
+        except Exception as e:
+            last_exc = e
+            if _is_rate_limit(e) and attempt < 2:
+                time.sleep(delay); delay *= 2
             else:
                 break
     raise last_exc  # type: ignore[misc]

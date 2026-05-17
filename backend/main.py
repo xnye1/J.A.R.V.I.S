@@ -51,17 +51,19 @@ STATIC = Path(__file__).parent / "static"
 # ── Connection Manager ────────────────────────────────────────────────────────
 
 class ConnectionManager:
-    """Tracks HUD, Remote, and Streaming WebSocket connections."""
+    """Tracks HUD, Remote, Streaming, and Laptop Agent WebSocket connections."""
 
     def __init__(self) -> None:
         self.hud:       list[WebSocket] = []
         self.remote:    list[WebSocket] = []
         self.streaming: list[WebSocket] = []   # /ws/stream iPhone clients
+        self.laptop:    list[WebSocket] = []   # laptop_agent.py connections
 
     def _drop(self, ws: WebSocket) -> None:
         self.hud       = [c for c in self.hud       if c is not ws]
         self.remote    = [c for c in self.remote    if c is not ws]
         self.streaming = [c for c in self.streaming if c is not ws]
+        self.laptop    = [c for c in self.laptop    if c is not ws]
 
     async def _send(self, ws: WebSocket, payload: dict) -> None:
         try:
@@ -81,6 +83,10 @@ class ConnectionManager:
         for ws in list(self.streaming):
             await self._send(ws, payload)
 
+    async def broadcast_laptop(self, payload: dict) -> None:
+        for ws in list(self.laptop):
+            await self._send(ws, payload)
+
     async def broadcast_all(self, payload: dict) -> None:
         for ws in list(self.hud + self.remote + self.streaming):
             await self._send(ws, payload)
@@ -93,6 +99,9 @@ class ConnectionManager:
 
     @property
     def streaming_count(self) -> int: return len(self.streaming)
+
+    @property
+    def laptop_count(self) -> int: return len(self.laptop)
 
 
 # ── Singletons ────────────────────────────────────────────────────────────────
@@ -388,6 +397,12 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     "battery_plugged": s.battery_plugged,
                 },
             })
+        elif device == "laptop":
+            manager.laptop.append(ws)
+            await ws.send_json({"type": "connected", "device": "laptop",
+                                "neural_link": "active"})
+            await manager.broadcast_hud({"type": "service_online",
+                                         "service": "Laptop Agent"})
         else:
             manager.remote.append(ws)
             fury.on_connect()
@@ -410,13 +425,36 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 await manager.broadcast_hud({"type": "remote_speaking", "message": text})
                 await dispatcher.emit({"type": "orb_react", "intensity": 0.6, "duration": 500},
                                       Priority.NORMAL)
-                reply = await asyncio.to_thread(jarvis.chat, text)
+
+                if manager.laptop_count > 0:
+                    # ── Agent mode: laptop connected, use tool-calling loop ──
+                    from core.agent_loop import get_or_create, remove as remove_agent
+                    sess_id = str(id(ws))
+
+                    async def _progress(msg: str) -> None:
+                        await ws.send_json({"type": "agent_progress", "message": msg})
+                        await dispatcher.emit({"type": "agent_progress", "message": msg},
+                                              Priority.NORMAL)
+
+                    agent = get_or_create(sess_id, manager.broadcast_laptop, _progress)
+                    try:
+                        reply = await agent.run(text)
+                    finally:
+                        remove_agent(sess_id)
+                else:
+                    # ── Chat mode: no laptop agent connected ──
+                    reply = await asyncio.to_thread(jarvis.chat, text)
+
                 await ws.send_json({"type": "chat_response", "message": reply})
                 await dispatcher.emit({"type": "chat_response", "query": text, "message": reply},
                                       Priority.HIGH)
                 await dispatcher.emit({"type": "orb_react", "intensity": 1.0, "duration": 3000},
                                       Priority.HIGH)
                 state.increment_messages()
+
+            elif msg_type == "tool_result":
+                from core.agent_loop import dispatch_tool_result
+                dispatch_tool_result(data.get("id", ""), data.get("result", ""))
 
             elif msg_type == "test_signal":
                 await dispatcher.emit({"type": "test_signal",

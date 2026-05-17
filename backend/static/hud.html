@@ -867,6 +867,9 @@ reg('chat_response',m=>{
   typing.classList.remove('show');addMsg('JARVIS',m.message,'j');arcReact('RESPONDING',3500);
   RC.fetching=false;
 });
+reg('agent_progress',m=>{
+  addEvt(m.message,'hi');arcReact('EXECUTING',800);
+});
 reg('proactive_alert',m=>{
   addMsg('JARVIS ALERT',m.message,'a');addAlert(m.message);arcReact('ALERT',3000);flash();
 });
