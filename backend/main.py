@@ -287,7 +287,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         seed_initial_data()
 
     dispatcher.set_broadcast(manager.broadcast_hud)
-    routes.wire(manager, registry)
+    routes.wire(manager, registry, jarvis)
 
     t1 = asyncio.create_task(proactive_engine.start())
     t2 = asyncio.create_task(_status_broadcaster())

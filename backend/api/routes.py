@@ -41,7 +41,7 @@ from core.system_info   import get_detailed_status, to_dict as status_to_dict
 from system.monitor     import get_current_status
 
 router  = APIRouter()
-jarvis  = JarvisPersona()
+jarvis: JarvisPersona  # injected by main.py via wire()
 
 from core.persona import SIMULATION_MODE as _SIM
 
@@ -49,11 +49,12 @@ from core.persona import SIMULATION_MODE as _SIM
 _manager    = None
 _registry   = None
 
-def wire(manager, registry) -> None:
+def wire(manager, registry, persona: JarvisPersona | None = None) -> None:
     """Called by main.py during startup to inject shared objects."""
-    global _manager, _registry
+    global _manager, _registry, jarvis
     _manager  = manager
     _registry = registry
+    jarvis    = persona if persona is not None else JarvisPersona()
 
 
 # ── Info ──────────────────────────────────────────────────────────────────────
