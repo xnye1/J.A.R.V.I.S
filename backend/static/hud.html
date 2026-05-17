@@ -827,7 +827,8 @@ document.getElementById('cmd-input').addEventListener('keydown',e=>{
 // ── WEBSOCKET ──
 let ws;
 function connect(){
-  ws=new WebSocket(`ws://${location.host}/ws`);
+  const _proto=location.protocol==='https:'?'wss':'ws';
+  ws=new WebSocket(`${_proto}://${location.host}/ws`);
   const led=document.getElementById('ws-led');
   const lbl=document.getElementById('ws-lbl');
   ws.onopen=()=>{
