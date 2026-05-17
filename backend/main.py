@@ -432,7 +432,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     sess_id = str(id(ws))
 
                     async def _progress(msg: str) -> None:
-                        await ws.send_json({"type": "agent_progress", "message": msg})
+                        # Remote gets direct send; HUD gets via dispatcher — never both
+                        if device != "hud":
+                            await ws.send_json({"type": "agent_progress", "message": msg})
                         await dispatcher.emit({"type": "agent_progress", "message": msg},
                                               Priority.NORMAL)
 
@@ -445,7 +447,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     # ── Chat mode: no laptop agent connected ──
                     reply = await asyncio.to_thread(jarvis.chat, text)
 
-                await ws.send_json({"type": "chat_response", "message": reply})
+                # Remote gets reply directly; HUD gets it via dispatcher — never both
+                if device != "hud":
+                    await ws.send_json({"type": "chat_response", "message": reply})
                 await dispatcher.emit({"type": "chat_response", "query": text, "message": reply},
                                       Priority.HIGH)
                 await dispatcher.emit({"type": "orb_react", "intensity": 1.0, "duration": 3000},
