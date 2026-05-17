@@ -258,6 +258,7 @@ html, body {
     <div class="qbtn" onclick="quickSend('상태 보고해')">📊 상태 보고</div>
     <div class="qbtn" onclick="triggerBriefing('morning')">🌅 모닝 브리핑</div>
     <div class="qbtn" onclick="toggleFocus()">🎯 집중 모드</div>
+    <div class="qbtn" onclick="reportGPS()">📍 GPS 동기화</div>
     <div class="qbtn" onclick="resetConv()">🔄 초기화</div>
     <div class="qbtn wide" onclick="sendTestSignal()">⚡ HUD 연결 테스트</div>
   </div>
@@ -382,20 +383,20 @@ function reportBattery() {
 }
 
 function reportGPS() {
-  if (!navigator.geolocation) return;
-  navigator.geolocation.getCurrentPosition(pos => {
-    const lat = pos.coords.latitude;
-    const lon = pos.coords.longitude;
+  if (!navigator.geolocation) { addMsg('SYSTEM', 'GPS 미지원 브라우저', 's'); return; }
+  const opts = { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 };
+  const send = pos => {
     if (ws?.readyState === 1)
-      ws.send(JSON.stringify({ type: 'location', lat, lon, source: 'gps' }));
-  }, () => {});  // silent on deny
-  // Re-report every 10 minutes
-  setInterval(() => {
-    navigator.geolocation.getCurrentPosition(pos => {
-      if (ws?.readyState === 1)
-        ws.send(JSON.stringify({ type: 'location', lat: pos.coords.latitude, lon: pos.coords.longitude, source: 'gps' }));
-    }, () => {});
-  }, 600000);
+      ws.send(JSON.stringify({ type: 'location', lat: pos.coords.latitude, lon: pos.coords.longitude, source: 'gps' }));
+    addMsg('SYSTEM', `GPS ✓ (${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)})`, 's');
+  };
+  const fail = err => {
+    const msg = err.code === 1 ? 'GPS 권한 거부됨 — 설정 > Safari > 위치 허용 필요'
+              : err.code === 2 ? 'GPS 신호 없음' : 'GPS 시간 초과';
+    addMsg('SYSTEM', msg, 's');
+  };
+  navigator.geolocation.getCurrentPosition(send, fail, opts);
+  setInterval(() => navigator.geolocation.getCurrentPosition(send, () => {}, opts), 600000);
 }
 
 // ── Laptop stats ──────────────────────────────────────────────────────────────
