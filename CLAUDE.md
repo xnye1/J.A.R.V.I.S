@@ -102,6 +102,8 @@ Current handlers: connected · pong · remote_speaking · chat_response · proac
 | GET | `/hud` | HUD HTML page |
 | GET | `/remote` | Remote HTML page |
 | GET | `/mobile` | Mobile PWA HUD (iPhone Safari) |
+| POST | `/proactive/trigger?trigger=morning\|lunch\|study\|night\|battery` | Manually fire proactive briefing |
+| GET | `/study/stats/today` | Today's focus session count, minutes, distractions |
 
 ---
 
@@ -176,13 +178,34 @@ Toggle via: HUD switch · Remote switch · `POST /reactor` · WS `reactor_toggle
 | GET | `/anger` | Live anger gauge snapshot |
 | POST | `/anger/reset` | Reset gauge + broadcast to HUD |
 
+### Phase 16 — Polishing Round (this session)
+
+| Fix / Feature | Files |
+|---|---|
+| Weather key mismatch (`temp_c`/`max_c`/`min_c`) — morning briefing was showing `?` | `services/school_service.py`, `core/proactive_agent.py` |
+| `POST /proactive/trigger?trigger=morning\|lunch\|study\|night\|battery` — on-demand briefing | `main.py` |
+| Weather/meal strip on `/mobile` and `/remote` — phone sees temp + condition + meal preview | `static/mobile_hud.html`, `static/remote.html` |
+| Service broadcaster runs for phone-only sessions (no HUD required) | `main.py` |
+| Shared `JarvisPersona` instance — REST/SSE and WS now share one conversation history | `api/routes.py`, `main.py` |
+| gTTS fallback in `synthesize()` — voice works without ElevenLabs key | `core/voice_bridge.py` |
+| Phone battery reporting from `/mobile` via `phone_status` WS frame | `static/mobile_hud.html` |
+| `_busy`/`_streaming` reset on WS reconnect — mic/send no longer locked after drop | `static/mobile_hud.html`, `static/remote.html` |
+| Study nudge fetches top weak subject from `/study/plan` DB | `core/proactive_agent.py` |
+| `simulation_mode` field in remote `/ws` connected message | `main.py` |
+| Morning briefing quick button on both phone UIs (`/proactive/trigger`) | `static/mobile_hud.html`, `static/remote.html` |
+| Focus toggle button actually starts/stops DopamineGuard via `/focus/toggle` | `static/mobile_hud.html`, `static/remote.html` |
+| `/focus/toggle` null-safety fix (session_status() returns None when inactive) | `api/routes.py` |
+| Daily study stats: `state.daily_study_stats()` + `GET /study/stats/today` | `core/state.py`, `api/routes.py` |
+| DopamineGuard.end_session() records stats → night wrap reports real data | `services/dopamine_guard.py`, `core/proactive_agent.py` |
+
 ### Pending / Next Phase
 
-- Phase 10 (if planned): TBD
 - iOS device re-integration when available: activate `frontend/mobile/App.js`
 - GiGA Genie full integration (Phase 8 was stubbed)
 - Redis conversation memory (currently disabled/fallback)
-- ANTHROPIC_API_KEY activation (currently simulation mode)
+- HTTPS/SSL on Oracle server — required for mobile voice (getUserMedia); suggest Cloudflare Tunnel or nginx + Let's Encrypt
+- NEIS school meal: configure `NEIS_API_KEY`, `NEIS_OFFICE_CODE`, `NEIS_SCHOOL_CODE` in `.env`
+- Phase 16 mock→real: study_service, productivity_service, intelligence_service, analysis_service
 
 ---
 
