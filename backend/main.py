@@ -34,7 +34,7 @@ from core.empathy_engine import empathy
 from core.dorm_tracker  import dorm_tracker
 from core.fury_tracker  import fury
 from core.persona       import JarvisPersona
-from core.proactive_agent import ProactiveAgent
+from core.proactive_agent import ProactiveAgent, _now_kst
 from core.state         import state
 from core.stealth       import classify_location, current_mute_state, decide_output, FocusMode, OutputMode
 from core.system_info   import get_detailed_status
@@ -314,6 +314,37 @@ async def remote_page():
 @app.get("/mobile", response_class=HTMLResponse)
 async def mobile_page():
     return HTMLResponse((STATIC / "mobile_hud.html").read_text(encoding="utf-8"))
+
+
+# ── Proactive manual trigger (testing / on-demand briefings) ──────────────────
+
+from fastapi import HTTPException as _HTTPException
+
+_PROACTIVE_TRIGGERS = ("morning", "lunch", "study", "night", "battery")
+
+@app.post("/proactive/trigger")
+async def proactive_trigger_endpoint(trigger: str = "morning"):
+    """
+    Manually fire a proactive JARVIS briefing without waiting for the schedule.
+    trigger: morning | lunch | study | night | battery
+    Bypasses the once-per-day guard — useful for testing and on-demand briefings.
+    """
+    if trigger not in _PROACTIVE_TRIGGERS:
+        raise _HTTPException(status_code=400,
+                             detail=f"Unknown trigger '{trigger}'. Valid: {_PROACTIVE_TRIGGERS}")
+    now = _now_kst()
+    if trigger == "morning":
+        await proactive_time_agent._morning_briefing(now)
+    elif trigger == "lunch":
+        await proactive_time_agent._lunch_briefing(now)
+    elif trigger == "study":
+        await proactive_time_agent._study_nudge(now)
+    elif trigger == "night":
+        await proactive_time_agent._night_wrap(now)
+    elif trigger == "battery":
+        proactive_time_agent._last_bat_warn = 0.0  # reset throttle
+        await proactive_time_agent._battery_check()
+    return {"triggered": trigger, "kst": now.strftime("%Y-%m-%d %H:%M:%S")}
 
 
 # ── WebSocket hub ─────────────────────────────────────────────────────────────
