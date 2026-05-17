@@ -256,7 +256,7 @@ html, body {
   <!-- Quick actions -->
   <div id="quick">
     <div class="qbtn" onclick="quickSend('상태 보고해')">📊 상태 보고</div>
-    <div class="qbtn" onclick="quickSend('오늘 날씨 어때')">🌤 날씨</div>
+    <div class="qbtn" onclick="triggerBriefing('morning')">🌅 모닝 브리핑</div>
     <div class="qbtn" onclick="quickSend('집중 모드 시작해줘')">🎯 집중 모드</div>
     <div class="qbtn" onclick="resetConv()">🔄 초기화</div>
     <div class="qbtn wide" onclick="sendTestSignal()">⚡ HUD 연결 테스트</div>
@@ -473,6 +473,15 @@ function sendText() {
 }
 
 function quickSend(text) { sendMsg(text); }
+
+async function triggerBriefing(trigger = 'morning') {
+  addMsg('SYSTEM', '브리핑 요청 중…', 's');
+  try {
+    const resp = await fetch(`/proactive/trigger?trigger=${trigger}`, { method: 'POST' });
+    if (!resp.ok) throw new Error(resp.status);
+    addMsg('SYSTEM', 'JARVIS 브리핑이 전송되었습니다, Sir.', 's');
+  } catch { addMsg('SYSTEM', '브리핑 요청 실패', 's'); }
+}
 
 function sendTestSignal() {
   if (ws?.readyState !== 1) { addMsg('SYSTEM', 'WS 연결이 없습니다.', 's'); return; }

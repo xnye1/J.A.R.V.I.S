@@ -193,10 +193,10 @@ html, body {
 
   <div id="quick">
     <div class="qb" onclick="send('상태 보고해')">📊 상태</div>
-    <div class="qb" onclick="send('오늘 날씨 알려줘')">🌤 날씨</div>
+    <div class="qb" onclick="triggerBriefing('morning')">🌅 모닝 브리핑</div>
     <div class="qb" onclick="send('집중 모드 시작')">🎯 집중</div>
     <div class="qb" onclick="send('내 폰 배터리 얼마야')">🔋 배터리</div>
-    <div class="qb" onclick="send('노트북 CPU 얼마야')">💻 CPU</div>
+    <div class="qb" onclick="send('오늘 날씨 알려줘')">🌤 날씨</div>
     <div class="qb" onclick="clearFeed()">🗑 초기화</div>
   </div>
 
@@ -382,6 +382,15 @@ function clearFeed() {
   feed.innerHTML = '';
   fetch('/reset', { method: 'POST' });
   addMsg('SYSTEM', 'Conversation cleared, Sir.', 's');
+}
+
+async function triggerBriefing(trigger = 'morning') {
+  addMsg('SYSTEM', '브리핑 요청 중…', 's');
+  try {
+    const resp = await fetch(`/proactive/trigger?trigger=${trigger}`, { method: 'POST' });
+    if (!resp.ok) throw new Error(resp.status);
+    addMsg('SYSTEM', 'JARVIS 브리핑이 전송되었습니다, Sir.', 's');
+  } catch { addMsg('SYSTEM', '브리핑 요청 실패', 's'); }
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
