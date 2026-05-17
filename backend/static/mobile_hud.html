@@ -227,6 +227,7 @@ function connect() {
   ws.onopen = () => {
     _retryMs = 1000;
     setConn(true);
+    reportPhoneBattery();
   };
 
   ws.onclose = () => {
@@ -252,6 +253,24 @@ document.addEventListener('visibilitychange', () => {
 function setConn(ok) {
   document.getElementById('dot').className       = ok ? 'dot on' : 'dot';
   document.getElementById('conn-txt').textContent = ok ? 'LIVE' : 'RECONNECTING';
+}
+
+// ── Phone battery → server (feeds device context for LLM injection) ───────────
+function reportPhoneBattery() {
+  if (!navigator.getBattery) return;
+  navigator.getBattery().then(b => {
+    const send = () => {
+      if (ws?.readyState === WebSocket.OPEN)
+        ws.send(JSON.stringify({
+          type:    'phone_status',
+          battery: Math.round(b.level * 100),
+          charging: b.charging,
+        }));
+    };
+    send();
+    b.addEventListener('levelchange',    send);
+    b.addEventListener('chargingchange', send);
+  });
 }
 
 // ── Message dispatcher ────────────────────────────────────────────────────────
