@@ -163,6 +163,7 @@ html, body {
   <div id="topbar">
     <div class="brand">JARVIS</div>
     <div class="sr">
+      <span id="phone-bat" style="display:none;font-size:10px;color:var(--green);letter-spacing:1px;"></span>
       <div id="mode-badge">--</div>
       <div class="dot" id="dot"></div>
       <span id="conn-txt">CONNECTING</span>
@@ -356,7 +357,21 @@ function onMsg(msg) {
     case 'school_update':
       updateWeather(msg);
       break;
+
+    case 'device_sync':
+      if (msg.device === 'phone') updatePhoneBat(msg);
+      break;
   }
+}
+
+function updatePhoneBat(msg) {
+  const el = document.getElementById('phone-bat');
+  if (!el) return;
+  const pct = msg.battery ?? '--';
+  const icon = msg.charging ? '⚡' : '🔋';
+  el.textContent = `${icon} ${pct}%`;
+  el.style.display = '';
+  el.style.color = (typeof pct === 'number' && pct <= 20) ? 'var(--alert)' : 'var(--green)';
 }
 
 function updateWeather(d) {
