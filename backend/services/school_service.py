@@ -115,8 +115,15 @@ class SchoolService(BaseService):
             return {"date": date_yyyymmdd, "menu": ["급식 정보 로드 실패"], "calories": None}
 
     async def _refresh_weather(self) -> None:
-        lat = _HOME_LAT or "37.5665"
-        lon = _HOME_LON or "126.9780"
+        # Priority: live phone GPS → env vars → Seoul default
+        try:
+            from core.device_context import device_ctx
+            p = device_ctx._phone
+            lat = str(p["lat"]) if p.get("lat") else (_HOME_LAT or "37.5665")
+            lon = str(p["lon"]) if p.get("lon") else (_HOME_LON or "126.9780")
+        except Exception:
+            lat = _HOME_LAT or "37.5665"
+            lon = _HOME_LON or "126.9780"
         try:
             url = (
                 f"https://api.open-meteo.com/v1/forecast"

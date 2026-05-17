@@ -436,6 +436,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 # Phone GPS update → stealth routing + dorm tracking + Welcome Home
                 lat  = float(data.get("lat", 0))
                 lon  = float(data.get("lon", 0))
+                # Store live GPS in device context (used by weather service)
+                from core.device_context import device_ctx as _dc
+                _dc.update_phone({"lat": lat, "lon": lon})
                 zone = classify_location(lat, lon)
                 fm   = FocusMode(data.get("focus_mode", "none"))
                 route = decide_output(

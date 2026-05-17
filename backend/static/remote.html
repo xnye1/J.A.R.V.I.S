@@ -338,6 +338,7 @@ function connect() {
     _streaming = false;  // reset if WS dropped mid-stream
     document.getElementById('send-btn').disabled = false;
     reportBattery();
+    reportGPS();
   };
 
   ws.onclose = () => {
@@ -378,6 +379,23 @@ function reportBattery() {
     b.addEventListener('levelchange', send);
     b.addEventListener('chargingchange', send);
   });
+}
+
+function reportGPS() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(pos => {
+    const lat = pos.coords.latitude;
+    const lon = pos.coords.longitude;
+    if (ws?.readyState === 1)
+      ws.send(JSON.stringify({ type: 'location', lat, lon, source: 'gps' }));
+  }, () => {});  // silent on deny
+  // Re-report every 10 minutes
+  setInterval(() => {
+    navigator.geolocation.getCurrentPosition(pos => {
+      if (ws?.readyState === 1)
+        ws.send(JSON.stringify({ type: 'location', lat: pos.coords.latitude, lon: pos.coords.longitude, source: 'gps' }));
+    }, () => {});
+  }, 600000);
 }
 
 // ── Laptop stats ──────────────────────────────────────────────────────────────

@@ -230,6 +230,7 @@ function connect() {
     document.getElementById('send-btn').disabled = false;
     setConn(true);
     reportPhoneBattery();
+    reportGPS();
   };
 
   ws.onclose = () => {
@@ -273,6 +274,20 @@ function reportPhoneBattery() {
     b.addEventListener('levelchange',    send);
     b.addEventListener('chargingchange', send);
   });
+}
+
+function reportGPS() {
+  if (!navigator.geolocation) return;
+  const send = pos => {
+    if (ws?.readyState === WebSocket.OPEN)
+      ws.send(JSON.stringify({
+        type: 'phone_status',
+        lat:  pos.coords.latitude,
+        lon:  pos.coords.longitude,
+      }));
+  };
+  navigator.geolocation.getCurrentPosition(send, () => {});
+  setInterval(() => navigator.geolocation.getCurrentPosition(send, () => {}), 600000);
 }
 
 // ── Message dispatcher ────────────────────────────────────────────────────────
