@@ -533,7 +533,8 @@ async def shortcut_focus_toggle():
     guard: DopamineGuard | None = _registry.get("dopamine_guard") if _registry else None
     if guard is None:
         raise HTTPException(status_code=503, detail="DopamineGuard not available.")
-    if guard.session_status().get("active"):
+    status = guard.session_status()
+    if status and status.get("active"):
         result = await guard.end_session() or {"status": "ended"}
         return {**result, "toggled": "off"}
     session = await guard.begin_session(25)
