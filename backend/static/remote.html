@@ -7,200 +7,270 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#000814">
 <title>JARVIS Remote</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
+/* ── Reset ─────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --cyan: #00f2ff; --bg: #000814; --panel: rgba(10,22,40,0.92);
-  --text: #cbd5e1; --muted: #475569; --border: rgba(0,242,255,0.2);
-  --alert: #ef4444; --purple: #a78bfa; --green: #22c55e;
+  --bg:     #000814;
+  --cyan:   #00d4ff;
+  --violet: #7c3aed;
+  --panel:  rgba(0,14,32,0.84);
+  --border: rgba(0,212,255,0.16);
+  --text:   #c8d8e8;
+  --muted:  #3a5272;
+  --alert:  #ef4444;
+  --green:  #22c55e;
+  --amber:  #f59e0b;
 }
 
 html, body {
   width: 100%; height: 100%;
   background: var(--bg); color: var(--text);
-  font-family: 'Courier New', monospace;
-  overflow: hidden;
-  -webkit-text-size-adjust: 100%;
+  font-family: 'Share Tech Mono', 'Courier New', monospace;
+  overflow: hidden; -webkit-text-size-adjust: 100%;
 }
 
-/* ── Layout ─────────────────────────────────────────────────────────── */
+/* ── Background: grid + scanlines ─────────────────────────────────────────── */
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    linear-gradient(rgba(0,212,255,0.028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,212,255,0.028) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+body::after {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 1;
+  background: repeating-linear-gradient(
+    0deg, rgba(0,0,0,0.055) 0px, rgba(0,0,0,0.055) 1px,
+    transparent 1px, transparent 3px
+  );
+}
+
+/* ── App shell ────────────────────────────────────────────────────────────── */
 #app {
   display: flex; flex-direction: column; height: 100dvh;
   padding: env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px);
+  position: relative; z-index: 10;
 }
 
-/* ── Top bar ─────────────────────────────────────────────────────────── */
+/* ── Top bar ──────────────────────────────────────────────────────────────── */
 #topbar {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 16px 10px;
+  padding: 10px 16px; flex-shrink: 0;
   border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+  background: rgba(0,4,14,0.72); backdrop-filter: blur(14px);
 }
-.brand { color: var(--cyan); font-size: 14px; letter-spacing: 4px; font-weight: 700; }
-.status-row { display: flex; align-items: center; gap: 10px; }
-.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--alert); flex-shrink: 0; }
-.dot.on { background: var(--green); animation: blink 2s infinite; }
+.brand {
+  font-family: 'Orbitron', monospace; font-size: 14px; font-weight: 900; letter-spacing: 5px;
+  background: linear-gradient(90deg, var(--cyan) 0%, #a78bfa 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.brand-sub {
+  font-size: 7px; letter-spacing: 4px; color: var(--muted);
+  font-family: 'Orbitron', monospace; margin-top: 1px;
+  -webkit-text-fill-color: var(--muted);
+}
+.status-row { display: flex; align-items: center; gap: 8px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--alert); flex-shrink: 0; }
+.dot.on { background: var(--green); box-shadow: 0 0 7px var(--green); animation: blink 2.5s infinite; }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
-#conn-label { font-size: 9px; letter-spacing: 2px; color: var(--muted); }
+#conn-label { font-size: 7px; letter-spacing: 2px; color: var(--muted); }
 #chip-mode {
-  font-size: 9px; letter-spacing: 2px; font-weight: 700;
-  padding: 3px 8px; border-radius: 6px;
-  background: rgba(0,242,255,.08); border: 1px solid var(--border);
-  color: var(--cyan);
+  font-family: 'Orbitron', monospace; font-size: 7px; letter-spacing: 2px; font-weight: 700;
+  padding: 2px 7px; border-radius: 3px;
+  background: rgba(0,212,255,0.07); border: 1px solid var(--border); color: var(--cyan);
 }
-#chip-mode.sim { color: #fbbf24; border-color: rgba(251,191,36,.3); background: rgba(251,191,36,.07); }
+#chip-mode.sim { color: var(--amber); border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.07); }
 
-/* ── Chat feed ───────────────────────────────────────────────────────── */
-#feed-wrap {
-  flex: 1; overflow-y: auto; padding: 12px 14px;
-  scrollbar-width: none;
-}
+/* ── Chat feed ────────────────────────────────────────────────────────────── */
+#feed-wrap { flex: 1; overflow-y: auto; padding: 10px 14px; scrollbar-width: none; }
 #feed-wrap::-webkit-scrollbar { display: none; }
 #feed { display: flex; flex-direction: column; gap: 10px; }
 
 .msg-block { display: flex; flex-direction: column; gap: 3px; }
-.msg-who { font-size: 8px; letter-spacing: 2px; padding: 0 4px; }
+.msg-who { font-size: 7px; letter-spacing: 2px; padding: 0 5px; font-family: 'Orbitron', monospace; }
 .msg-who.j { color: var(--cyan); }
-.msg-who.u { color: var(--purple); }
-.msg-who.s { color: var(--muted); }
+.msg-who.u { color: #a78bfa; text-align: right; }
+.msg-who.s { color: var(--muted); text-align: center; }
 .msg-text {
-  font-size: 13px; line-height: 1.65; padding: 9px 12px;
-  border-radius: 4px 14px 14px 14px; word-break: break-word;
+  font-size: 13px; line-height: 1.72; padding: 10px 13px;
+  word-break: break-word; backdrop-filter: blur(10px);
 }
-.msg-text.j { background: rgba(0,242,255,.06); border: 1px solid rgba(0,242,255,.15); color: var(--text); }
-.msg-text.u { background: rgba(167,139,250,.08); border: 1px solid rgba(167,139,250,.2); color: var(--purple); border-radius: 14px 4px 14px 14px; }
-.msg-text.s { background: rgba(255,255,255,.03); color: var(--muted); font-size: 11px; border-radius: 8px; border: 1px solid rgba(255,255,255,.06); }
+.msg-text.j {
+  background: rgba(0,212,255,0.05); border: 1px solid rgba(0,212,255,0.13);
+  border-left: 2px solid rgba(0,212,255,0.55);
+  border-radius: 2px 12px 12px 12px;
+}
+.msg-text.u {
+  background: rgba(124,58,237,0.08); border: 1px solid rgba(124,58,237,0.2);
+  border-right: 2px solid rgba(124,58,237,0.55);
+  border-radius: 12px 2px 12px 12px; color: #c4b5fd;
+}
+.msg-text.s {
+  background: rgba(255,255,255,0.02); color: var(--muted);
+  font-size: 11px; border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.05); text-align: center;
+}
 .stream-cursor {
-  display: inline-block; width: 2px; height: 0.9em;
+  display: inline-block; width: 2px; height: 0.88em;
   background: var(--cyan); margin-left: 2px; vertical-align: text-bottom;
   animation: cur-blink 0.55s ease-in-out infinite;
 }
 @keyframes cur-blink { 0%,100%{opacity:1} 50%{opacity:0} }
 
-/* ── Weather strip ───────────────────────────────────────────────────── */
+/* ── Weather strip ────────────────────────────────────────────────────────── */
 #weather-strip {
   flex-shrink: 0; display: flex; align-items: center; gap: 8px;
-  padding: 4px 14px; font-size: 10px;
-  border-bottom: 1px solid rgba(0,242,255,.07);
+  padding: 4px 14px; font-size: 9px; color: var(--muted);
+  border-bottom: 1px solid rgba(0,212,255,0.06);
+  background: rgba(0,212,255,0.018);
 }
+#weather-strip .wc {
+  color: var(--cyan); font-weight: 700;
+  font-family: 'Orbitron', monospace; font-size: 10px;
+  text-shadow: 0 0 8px rgba(0,212,255,0.4);
+}
+#weather-strip .wm { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* ── Laptop stats strip ──────────────────────────────────────────────── */
+/* ── Laptop stats ─────────────────────────────────────────────────────────── */
 #laptop-stats {
   flex-shrink: 0;
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
-  padding: 0 14px;
+  display: grid; grid-template-columns: repeat(4,1fr); gap: 5px;
+  padding: 7px 14px;
 }
 .stat-card {
-  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-  padding: 7px 6px; text-align: center;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 4px; text-align: center;
+  backdrop-filter: blur(14px); position: relative; overflow: hidden;
 }
-.stat-label { font-size: 7px; letter-spacing: 2px; color: var(--muted); }
-.stat-val   { font-size: 15px; font-weight: 700; color: var(--cyan); margin-top: 2px; }
-.stat-val.warn  { color: var(--alert); }
-.stat-val.ok    { color: var(--green); }
+.stat-card::after {
+  content: ''; position: absolute; top: 0; left: 10%; right: 10%; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0,212,255,0.4), transparent);
+}
+.stat-label { font-size: 6px; letter-spacing: 2px; color: var(--muted); font-family: 'Orbitron', monospace; }
+.stat-val {
+  font-size: 14px; font-weight: 700; color: var(--cyan); margin-top: 2px;
+  font-family: 'Orbitron', monospace;
+  text-shadow: 0 0 10px rgba(0,212,255,0.55);
+}
+.stat-val.warn { color: var(--alert); text-shadow: 0 0 10px rgba(239,68,68,0.55); }
+.stat-val.ok   { color: var(--green); text-shadow: 0 0 10px rgba(34,197,94,0.55); }
 
-/* ── Voice button ────────────────────────────────────────────────────── */
+/* ── Voice button ─────────────────────────────────────────────────────────── */
 #voice-area {
   flex-shrink: 0;
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 8px 0 4px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 6px 0 2px;
 }
 #voice-btn {
-  width: 76px; height: 76px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(0,242,255,.18), rgba(0,12,24,.95));
-  border: 2px solid var(--cyan);
-  box-shadow: 0 0 22px rgba(0,242,255,.35);
+  width: 78px; height: 78px; border-radius: 50%; position: relative;
+  background: radial-gradient(circle at 38% 30%, rgba(0,212,255,0.22) 0%, rgba(0,8,20,0.97) 65%);
+  border: 1.5px solid var(--cyan);
+  box-shadow: 0 0 28px rgba(0,212,255,0.25), inset 0 1px 0 rgba(0,212,255,0.12);
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer; font-size: 30px; user-select: none;
-  transition: transform .15s;
-  -webkit-tap-highlight-color: transparent;
-  animation: pb 2.5s ease-in-out infinite;
+  cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;
+  overflow: visible; transition: transform 0.12s, border-color 0.18s, box-shadow 0.18s;
 }
-@keyframes pb {
-  0%,100%{box-shadow:0 0 22px rgba(0,242,255,.35)}
-  50%{box-shadow:0 0 42px rgba(0,242,255,.65),0 0 70px rgba(0,242,255,.15)}
+.voice-ring {
+  position: absolute; inset: -1px; border-radius: 50%;
+  border: 1px solid rgba(0,212,255,0.5);
+  animation: v-ring 2.2s ease-out infinite;
+  pointer-events: none;
 }
+.voice-ring.r2 { animation-delay: 0.9s; }
+@keyframes v-ring {
+  0%   { transform: scale(1);   opacity: 0.6; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+.voice-svg { stroke: var(--cyan); transition: stroke 0.18s; }
 #voice-btn.listening {
-  animation: lp .55s ease-in-out infinite alternate;
+  border-color: var(--cyan);
+  box-shadow: 0 0 40px rgba(0,212,255,0.6);
 }
-@keyframes lp {
-  from{transform:scale(1);box-shadow:0 0 28px rgba(0,242,255,.6)}
-  to{transform:scale(1.1);box-shadow:0 0 55px rgba(0,242,255,1)}
-}
-#voice-btn:active { transform: scale(.9); }
-#voice-btn.disabled { opacity: .35; pointer-events: none; }
-#voice-hint { font-size: 9px; letter-spacing: 2px; color: var(--muted); }
-#https-note {
-  font-size: 9px; color: #fbbf24; letter-spacing: 1px; text-align: center;
-  padding: 4px 16px; display: none;
-}
-#https-note a { color: #fbbf24; }
+#voice-btn.listening .voice-ring { animation-duration: 1s; }
+#voice-btn.disabled { opacity: 0.35; pointer-events: none; }
+#voice-btn:active { transform: scale(0.92); }
 
-/* ── Quick actions ───────────────────────────────────────────────────── */
+#voice-hint { font-size: 7px; letter-spacing: 3px; color: var(--muted); font-family: 'Orbitron', monospace; }
+#https-note { font-size: 9px; color: var(--amber); letter-spacing: 1px; text-align: center; padding: 4px 16px; display: none; }
+#https-note a { color: var(--amber); }
+
+/* ── Quick actions ────────────────────────────────────────────────────────── */
 #quick {
-  flex-shrink: 0;
-  display: grid; grid-template-columns: 1fr 1fr; gap: 7px;
-  padding: 4px 14px 6px;
+  flex-shrink: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 5px;
+  padding: 4px 14px 4px;
 }
 .qbtn {
-  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-  padding: 11px 6px; text-align: center; cursor: pointer;
-  font-size: 11px; color: var(--text); letter-spacing: .5px;
-  transition: background .12s, border-color .12s;
-  -webkit-tap-highlight-color: transparent; user-select: none;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 9px; padding: 9px 6px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;
+  backdrop-filter: blur(10px); transition: background 0.1s, border-color 0.1s;
 }
-.qbtn:active { background: rgba(0,242,255,.1); border-color: var(--cyan); color: var(--cyan); }
-.qbtn.wide { grid-column: span 2; letter-spacing: 2px; font-weight: 700; border-color: rgba(167,139,250,.4); color: var(--purple); }
-.qbtn.wide:active { background: rgba(167,139,250,.12); border-color: var(--purple); }
+.qbtn .qi { font-size: 14px; }
+.qbtn .ql { font-size: 7px; color: var(--muted); letter-spacing: 1px; transition: color 0.1s; }
+.qbtn:active { background: rgba(0,212,255,0.1); border-color: rgba(0,212,255,0.45); }
+.qbtn:active .ql { color: var(--cyan); }
+.qbtn.wide { grid-column: span 2; flex-direction: row; gap: 6px; justify-content: center; }
+.qbtn.wide .ql { letter-spacing: 2px; color: #a78bfa; font-size: 8px; }
+.qbtn.wide:active .ql { color: #c4b5fd; }
+.qbtn.wide { border-color: rgba(124,58,237,0.3); }
+.qbtn.wide:active { background: rgba(124,58,237,0.1); border-color: rgba(124,58,237,0.5); }
 
-/* ── Bottom controls ─────────────────────────────────────────────────── */
+/* ── Controls row ─────────────────────────────────────────────────────────── */
 #controls {
-  flex-shrink: 0;
-  display: flex; align-items: center; gap: 6px;
-  padding: 4px 14px 6px;
+  flex-shrink: 0; display: flex; align-items: center; gap: 6px;
+  padding: 4px 14px 4px;
 }
 #reactor-btn {
-  flex-shrink: 0;
-  background: var(--panel); border: 1px solid rgba(0,242,255,.25); border-radius: 10px;
-  padding: 10px 12px; cursor: pointer; font-size: 10px; letter-spacing: 1px;
-  color: var(--cyan); -webkit-tap-highlight-color: transparent; user-select: none;
-  white-space: nowrap;
+  flex: 1; background: var(--panel); border: 1px solid rgba(0,212,255,0.22);
+  border-radius: 9px; padding: 9px 10px; cursor: pointer;
+  font-size: 9px; letter-spacing: 1px; color: var(--cyan);
+  font-family: 'Orbitron', monospace;
+  -webkit-tap-highlight-color: transparent; user-select: none;
+  text-align: center; backdrop-filter: blur(10px);
+  transition: background 0.1s;
 }
-#reactor-btn:active { background: rgba(0,242,255,.12); }
+#reactor-btn:active { background: rgba(0,212,255,0.12); }
 #tts-btn {
-  flex-shrink: 0;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-  padding: 10px 10px; cursor: pointer; font-size: 10px; letter-spacing: 1px;
-  color: var(--muted); -webkit-tap-highlight-color: transparent; user-select: none;
+  flex-shrink: 0; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 9px; padding: 9px 12px; cursor: pointer;
+  font-size: 9px; letter-spacing: 1px; color: var(--muted);
+  -webkit-tap-highlight-color: transparent; user-select: none;
+  backdrop-filter: blur(10px); transition: background 0.1s;
 }
-#tts-btn.on { color: var(--cyan); border-color: rgba(0,242,255,.4); }
-#tts-btn:active { background: rgba(0,242,255,.1); }
+#tts-btn.on { color: var(--cyan); border-color: rgba(0,212,255,0.4); }
+#tts-btn:active { background: rgba(0,212,255,0.1); }
 
-/* ── Input row ───────────────────────────────────────────────────────── */
+/* ── Input row ────────────────────────────────────────────────────────────── */
 #input-row {
-  flex-shrink: 0;
-  display: flex; gap: 8px; align-items: center;
+  flex-shrink: 0; display: flex; gap: 8px; align-items: center;
   padding: 6px 14px calc(env(safe-area-inset-bottom,0px) + 8px);
   border-top: 1px solid var(--border);
+  background: rgba(0,4,14,0.7); backdrop-filter: blur(14px);
 }
 #msg-input {
-  flex: 1; background: var(--panel); color: var(--text);
-  border: 1px solid var(--border); border-radius: 24px;
-  padding: 12px 16px; font-size: 14px; font-family: inherit;
+  flex: 1; background: rgba(0,212,255,0.04); color: var(--text);
+  border: 1px solid var(--border); border-radius: 20px;
+  padding: 11px 15px; font-size: 14px; font-family: inherit;
   outline: none; caret-color: var(--cyan);
+  transition: border-color 0.2s, background 0.2s;
 }
+#msg-input:focus { border-color: rgba(0,212,255,0.45); background: rgba(0,212,255,0.06); }
 #msg-input::placeholder { color: var(--muted); }
-#msg-input:focus { border-color: rgba(0,242,255,.5); }
 #send-btn {
-  width: 46px; height: 46px; border-radius: 50%; flex-shrink: 0;
-  background: var(--cyan); border: none; cursor: pointer;
-  font-size: 18px; color: var(--bg); font-weight: 800;
+  width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0;
+  background: linear-gradient(135deg, var(--cyan) 0%, #0099c4 100%);
+  border: none; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 0 14px rgba(0,242,255,.5);
-  transition: transform .12s; -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 0 18px rgba(0,212,255,0.5);
+  transition: transform 0.12s, opacity 0.2s;
+  -webkit-tap-highlight-color: transparent;
 }
-#send-btn:active { transform: scale(.88); }
-#send-btn:disabled { opacity: .35; cursor: not-allowed; transform: none; }
+#send-btn:active   { transform: scale(0.88); }
+#send-btn:disabled { opacity: 0.28; transform: none; cursor: default; }
 </style>
 </head>
 <body>
@@ -208,7 +278,10 @@ html, body {
 
   <!-- Top bar -->
   <div id="topbar">
-    <div class="brand">J.A.R.V.I.S</div>
+    <div>
+      <div class="brand">J.A.R.V.I.S</div>
+      <div class="brand-sub">REMOTE CONTROL</div>
+    </div>
     <div class="status-row">
       <div id="chip-mode">--</div>
       <div class="dot" id="conn-dot"></div>
@@ -221,46 +294,56 @@ html, body {
 
   <!-- Weather / meal strip -->
   <div id="weather-strip">
-    <span id="r-temp" style="color:var(--cyan);font-weight:700">--°C</span>
+    <span class="wc" id="r-temp">--°C</span>
     <span id="r-cond" style="color:var(--muted)">--</span>
-    <span id="r-meal" style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)">급식: --</span>
+    <span class="wm" id="r-meal">급식: --</span>
   </div>
 
   <!-- Laptop stats -->
   <div id="laptop-stats">
-    <div class="stat-card">
-      <div class="stat-label">CPU</div>
-      <div class="stat-val" id="ls-cpu">--%</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">RAM</div>
-      <div class="stat-val" id="ls-ram">--%</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">LAPTOP</div>
-      <div class="stat-val" id="ls-bat">--%</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">DISK</div>
-      <div class="stat-val" id="ls-disk">--%</div>
-    </div>
+    <div class="stat-card"><div class="stat-label">CPU</div><div class="stat-val" id="ls-cpu">--%</div></div>
+    <div class="stat-card"><div class="stat-label">RAM</div><div class="stat-val" id="ls-ram">--%</div></div>
+    <div class="stat-card"><div class="stat-label">LAPTOP</div><div class="stat-val" id="ls-bat">--%</div></div>
+    <div class="stat-card"><div class="stat-label">DISK</div><div class="stat-val" id="ls-disk">--%</div></div>
   </div>
 
   <!-- Voice button -->
   <div id="voice-area">
-    <div id="voice-btn">🎙</div>
+    <div id="voice-btn">
+      <div class="voice-ring r1"></div>
+      <div class="voice-ring r2"></div>
+      <svg class="voice-svg" width="26" height="26" viewBox="0 0 24 24" fill="none"
+           stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+        <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+        <line x1="12" y1="19" x2="12" y2="22"/>
+        <line x1="8"  y1="22" x2="16" y2="22"/>
+      </svg>
+    </div>
     <div id="voice-hint">HOLD TO SPEAK</div>
     <div id="https-note">음성 사용: <a id="https-link" href="#">HTTPS 버전으로 이동</a></div>
   </div>
 
   <!-- Quick actions -->
   <div id="quick">
-    <div class="qbtn" onclick="quickSend('상태 보고해')">📊 상태 보고</div>
-    <div class="qbtn" onclick="triggerBriefing('morning')">🌅 모닝 브리핑</div>
-    <div class="qbtn" onclick="toggleFocus()">🎯 집중 모드</div>
-    <div class="qbtn" onclick="reportGPS()">📍 GPS 동기화</div>
-    <div class="qbtn" onclick="resetConv()">🔄 초기화</div>
-    <div class="qbtn wide" onclick="sendTestSignal()">⚡ HUD 연결 테스트</div>
+    <div class="qbtn" onclick="quickSend('상태 보고해')">
+      <span class="qi">📊</span><span class="ql">STATUS</span>
+    </div>
+    <div class="qbtn" onclick="triggerBriefing('morning')">
+      <span class="qi">🌅</span><span class="ql">BRIEFING</span>
+    </div>
+    <div class="qbtn" onclick="toggleFocus()">
+      <span class="qi">🎯</span><span class="ql">FOCUS</span>
+    </div>
+    <div class="qbtn" onclick="reportGPS()">
+      <span class="qi">📍</span><span class="ql">GPS</span>
+    </div>
+    <div class="qbtn" onclick="resetConv()">
+      <span class="qi">🔄</span><span class="ql">CLEAR</span>
+    </div>
+    <div class="qbtn wide" onclick="sendTestSignal()">
+      <span class="qi">⚡</span><span class="ql">HUD CONNECTION TEST</span>
+    </div>
   </div>
 
   <!-- Controls row -->
@@ -273,7 +356,13 @@ html, body {
   <div id="input-row">
     <input id="msg-input" type="text" placeholder="명령을 내리십시오, Sir…"
       enterkeyhint="send" autocomplete="off" autocorrect="off" spellcheck="false">
-    <button id="send-btn" onclick="sendText()">▶</button>
+    <button id="send-btn" onclick="sendText()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+           stroke="#000814" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="22" y1="2" x2="11" y2="13"/>
+        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+      </svg>
+    </button>
   </div>
 
 </div>
@@ -294,21 +383,18 @@ if (!IS_HTTPS) {
   const note = document.getElementById('https-note');
   const link = document.getElementById('https-link');
   note.style.display = 'block';
-  // Replace port 8000 with port 443
   const httpsUrl = 'https://' + location.hostname + '/remote';
-  link.href = httpsUrl;
-  link.textContent = httpsUrl;
+  link.href = httpsUrl; link.textContent = httpsUrl;
   document.getElementById('voice-btn').classList.add('disabled');
   document.getElementById('voice-hint').textContent = 'HTTPS 전용';
 }
 
 // ── Feed helpers ──────────────────────────────────────────────────────────────
-const feed = document.getElementById('feed');
+const feed     = document.getElementById('feed');
 const feedWrap = document.getElementById('feed-wrap');
 
 function addMsg(who, text, cls) {
-  const block = document.createElement('div');
-  block.className = 'msg-block';
+  const block = document.createElement('div'); block.className = 'msg-block';
   block.innerHTML = `<div class="msg-who ${cls}">${who}</div><div class="msg-text ${cls}">${text}</div>`;
   feed.appendChild(block);
   feedWrap.scrollTop = feedWrap.scrollHeight;
@@ -336,7 +422,7 @@ function connect() {
   ws.onopen = () => {
     ws.send(JSON.stringify({ type: 'register', device: 'remote' }));
     dot.className = 'dot on'; lbl.textContent = 'ONLINE';
-    _streaming = false;  // reset if WS dropped mid-stream
+    _streaming = false;
     document.getElementById('send-btn').disabled = false;
     reportBattery();
     reportGPS();
@@ -407,9 +493,7 @@ function updateLaptopStats(d) {
     el.textContent = val + '%';
     el.className = 'stat-val' + (val >= warnThreshold ? ' warn' : val < warnThreshold - 30 ? ' ok' : '');
   };
-  set('ls-cpu',  d.cpu,  85);
-  set('ls-ram',  d.ram,  90);
-  set('ls-disk', d.disk, 90);
+  set('ls-cpu', d.cpu, 85); set('ls-ram', d.ram, 90); set('ls-disk', d.disk, 90);
   const batEl = document.getElementById('ls-bat');
   if (batEl) {
     batEl.textContent = d.bat + (d.plugged ? '%⚡' : '%');
@@ -421,7 +505,7 @@ function updateLaptopStats(d) {
 function updateWeatherChip(d) {
   const temp = d.temp_c ?? d.temp;
   if (temp !== undefined) document.getElementById('r-temp').textContent = temp + '°C';
-  if (d.condition) document.getElementById('r-cond').textContent = d.condition;
+  if (d.condition)    document.getElementById('r-cond').textContent = d.condition;
   if (d.meal_preview) document.getElementById('r-meal').textContent = '급식: ' + d.meal_preview;
 }
 
@@ -441,8 +525,7 @@ async function sendMsg(text) {
 
   try {
     const resp = await fetch('/chat/stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text }),
     });
     const reader = resp.body.getReader();
@@ -473,7 +556,6 @@ async function sendMsg(text) {
 
   bubble.cur.remove();
   feedWrap.scrollTop = feedWrap.scrollHeight;
-
   speak(fullReply);
 
   if (ws?.readyState === 1)
@@ -535,12 +617,12 @@ function applyReactor(energySaving) {
   reactorOn = !energySaving;
   const btn = document.getElementById('reactor-btn');
   btn.textContent = energySaving ? '⚡ REACTOR: SAVING' : '⚡ REACTOR: ONLINE';
-  btn.style.color  = energySaving ? '#fbbf24' : 'var(--cyan)';
-  btn.style.borderColor = energySaving ? 'rgba(251,191,36,.4)' : 'rgba(0,242,255,.25)';
+  btn.style.color       = energySaving ? 'var(--amber)' : 'var(--cyan)';
+  btn.style.borderColor = energySaving ? 'rgba(245,158,11,0.4)' : 'rgba(0,212,255,0.22)';
 }
 
 function toggleReactor() {
-  const newSaving = reactorOn; // reactorOn=true means currently full power, toggling → save
+  const newSaving = reactorOn;
   if (ws?.readyState === 1)
     ws.send(JSON.stringify({ type: 'reactor_toggle', energy_saving: newSaving }));
   applyReactor(newSaving);
