@@ -197,7 +197,7 @@ html, body {
     <div class="qb" onclick="triggerBriefing('morning')">🌅 모닝 브리핑</div>
     <div class="qb" onclick="startFocus()">🎯 집중</div>
     <div class="qb" onclick="send('내 폰 배터리 얼마야')">🔋 배터리</div>
-    <div class="qb" onclick="send('오늘 날씨 알려줘')">🌤 날씨</div>
+    <div class="qb" onclick="reportGPS()">📍 GPS 동기화</div>
     <div class="qb" onclick="clearFeed()">🗑 초기화</div>
   </div>
 
@@ -278,7 +278,8 @@ function reportPhoneBattery() {
 }
 
 function reportGPS() {
-  if (!navigator.geolocation) return;
+  if (!navigator.geolocation) { sttLine('GPS 미지원'); return; }
+  const opts = { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 };
   const send = pos => {
     if (ws?.readyState === WebSocket.OPEN)
       ws.send(JSON.stringify({
@@ -286,9 +287,18 @@ function reportGPS() {
         lat:  pos.coords.latitude,
         lon:  pos.coords.longitude,
       }));
+    sttLine(`GPS ✓ (${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)})`);
+    setTimeout(() => sttLine(''), 3000);
   };
-  navigator.geolocation.getCurrentPosition(send, () => {});
-  setInterval(() => navigator.geolocation.getCurrentPosition(send, () => {}), 600000);
+  const fail = err => {
+    const msg = err.code === 1 ? 'GPS 권한 거부됨 — 설정에서 위치 허용 필요'
+              : err.code === 2 ? 'GPS 신호 없음'
+              : 'GPS 시간 초과';
+    sttLine(msg);
+    setTimeout(() => sttLine(''), 4000);
+  };
+  navigator.geolocation.getCurrentPosition(send, fail, opts);
+  setInterval(() => navigator.geolocation.getCurrentPosition(send, () => {}, opts), 600000);
 }
 
 // ── Message dispatcher ────────────────────────────────────────────────────────
