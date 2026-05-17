@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 
 
@@ -32,6 +33,12 @@ class _State:
 
     # ── Memory service ────────────────────────────────────────────────────────
     memory_backend: str = "local"      # "local" | "chroma" | "pinecone"
+
+    # ── Daily study stats (resets at midnight) ────────────────────────────────
+    study_sessions_today:     int  = 0
+    study_minutes_today:      int  = 0
+    study_distractions_today: int  = 0
+    study_last_reset:         str  = ""   # ISO date string YYYY-MM-DD
 
 
 class StateManager:
@@ -118,6 +125,32 @@ class StateManager:
     def memory_backend(self, backend: str) -> None:
         self._s.memory_backend = backend
 
+    # ── Daily study stats ─────────────────────────────────────────────────────
+
+    def _maybe_reset_study(self) -> None:
+        today = date.today().isoformat()
+        if self._s.study_last_reset != today:
+            self._s.study_sessions_today     = 0
+            self._s.study_minutes_today      = 0
+            self._s.study_distractions_today = 0
+            self._s.study_last_reset         = today
+
+    def record_focus_session(self, minutes: int, distractions: int = 0) -> None:
+        """Called by DopamineGuard on session completion."""
+        self._maybe_reset_study()
+        self._s.study_sessions_today     += 1
+        self._s.study_minutes_today      += minutes
+        self._s.study_distractions_today += distractions
+
+    def daily_study_stats(self) -> dict:
+        self._maybe_reset_study()
+        return {
+            "sessions":     self._s.study_sessions_today,
+            "minutes":      self._s.study_minutes_today,
+            "distractions": self._s.study_distractions_today,
+            "date":         self._s.study_last_reset,
+        }
+
     # ── Snapshot ─────────────────────────────────────────────────────────────
 
     def snapshot(self) -> dict[str, Any]:
@@ -130,6 +163,7 @@ class StateManager:
             "dopamine_guard_active": self._s.dopamine_guard_active,
             "focus_session_minutes": self._s.focus_session_minutes,
             "memory_backend":       self._s.memory_backend,
+            "daily_study":          self.daily_study_stats(),
         }
 
 

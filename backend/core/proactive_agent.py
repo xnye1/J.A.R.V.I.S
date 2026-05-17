@@ -153,14 +153,23 @@ class ProactiveAgent:
 
     async def _night_wrap(self, now: datetime) -> None:
         from core.device_context import device_ctx
+        from core.state import state
         laptop = device_ctx._laptop
         cpu    = laptop.get("cpu", "?")
         ram    = laptop.get("ram", "?")
+        study  = state.daily_study_stats()
+        study_str = (
+            f"오늘 집중 세션 {study['sessions']}회 완료, "
+            f"총 {study['minutes']}분 공부, 방해 {study['distractions']}회."
+            if study['sessions'] > 0
+            else "오늘 집중 세션 기록 없음."
+        )
         prompt = (
             f"현재 시각은 밤 {now.strftime('%H시 %M분')}입니다. "
+            f"오늘 학습 현황: {study_str} "
             f"노트북 상태 — CPU {cpu}%, RAM {ram}%. "
-            "하루를 마무리하는 간결하고 품격 있는 저녁 마무리 인사를 해줘. "
-            "내일을 위한 간단한 한 가지 조언도 포함해줘."
+            "하루를 마무리하는 간결하고 품격 있는 저녁 인사를 해줘. "
+            "오늘 공부량에 대한 솔직한 평가와 내일을 위한 한 가지 조언도 포함해줘."
         )
         text = await _generate(prompt)
         await self._push(text)

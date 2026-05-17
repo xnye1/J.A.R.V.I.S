@@ -654,6 +654,12 @@ async def study_plan_add(req: StudyPlanRequest):
     return {"action": "created"}
 
 
+@router.get("/study/stats/today")
+async def study_stats_today():
+    """Today's completed focus sessions, total study minutes, and distraction count."""
+    return state.daily_study_stats()
+
+
 @router.get("/study/plan")
 async def study_plan_list(status: str = "pending"):
     """List study plan entries, ordered by weakness level descending."""

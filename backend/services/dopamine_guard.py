@@ -158,12 +158,17 @@ class DopamineGuard(BaseService):
         self._session = None
         self._state.dopamine_guard_active = False
 
+        elapsed_min = round(sess.elapsed_seconds / 60)
         summary = {
             "duration_minutes":   sess.duration_minutes,
             "elapsed_seconds":    round(sess.elapsed_seconds),
             "alerts_sent":        sess.alerts_sent,
             "distractions_hit":   sess.distractions_hit,
         }
+
+        # Record in daily stats (only count sessions > 1 min to filter accidentals)
+        if elapsed_min >= 1:
+            self._state.record_focus_session(elapsed_min, sess.alerts_sent)
 
         if notify:
             await self._emit({
