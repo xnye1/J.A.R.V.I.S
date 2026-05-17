@@ -214,13 +214,45 @@ class ProactiveAgent:
                 text = await _generate(prompt)
                 await self._push(text)
 
+    # ── Event-driven triggers (called externally on state changes) ────────────
+
+    async def on_phone_battery_drop(self, battery: int, prev: int) -> None:
+        """Fire immediately when phone battery drops to or below 20%."""
+        import time as _time
+        now = _time.monotonic()
+        if now - self._last_bat_warn < 1800:
+            return
+        self._last_bat_warn = now
+        prompt = (
+            f"폰 배터리가 {prev}%에서 {battery}%로 급감했습니다. "
+            "충전을 권고하는 짧고 단호한 경고를 해줘."
+        )
+        text = await _generate(prompt)
+        await self._push(text)
+
+    async def on_zone_change(self, new_zone: str, old_zone: str) -> None:
+        """Fire when GPS zone changes (e.g. home → out, out → school)."""
+        if new_zone == old_zone or new_zone == "unknown":
+            return
+        zone_map = {
+            "home":   "귀가",
+            "school": "학교 도착",
+            "dorm":   "기숙사 진입",
+            "out":    "외출",
+        }
+        label = zone_map.get(new_zone, new_zone)
+        prompt = (
+            f"사용자 위치가 '{old_zone}'에서 '{new_zone}'({label})으로 변경되었습니다. "
+            "자연스러운 상황 인식 한마디를 해줘. 장소 변화에 맞게 적절히 반응해줘."
+        )
+        text = await _generate(prompt)
+        await self._push(text)
+
 
 # ── LLM helper ────────────────────────────────────────────────────────────────
 
 async def _generate(user_prompt: str) -> str:
     """Call LLM with TTS-safe system prompt. Strips any residual markdown."""
-    if llm.SIMULATION_MODE:
-        return "현재 신경 링크가 시뮬레이션 모드입니다. API 키를 설정해 주시면 즉시 활성화됩니다, Sir."
     try:
         raw = await asyncio.to_thread(
             llm.generate,

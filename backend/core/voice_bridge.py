@@ -16,12 +16,44 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 
 import httpx
 
 from core.stealth import OutputMode, RouteDecision, classify_location, welcome_home_phrase
 
 log = logging.getLogger("jarvis.voice")
+
+# ── TTS text sanitiser ────────────────────────────────────────────────────────
+
+_MD_RE = re.compile(
+    r'\*{1,3}([^*\n]*)\*{1,3}'   # **bold** / *italic* / ***both***
+    r'|`{1,3}[^`]*`{1,3}'         # `code` / ```block```
+    r'|#{1,6}\s+'                  # ## headers
+    r'|\[([^\]]*)\]\([^)]*\)'      # [link text](url) → keep text
+    r'|[-*+]\s+'                   # - list items
+    r'|>\s+'                       # > blockquote
+    r'|_{1,2}([^_\n]*)_{1,2}'     # _italic_ / __bold__
+    r'|\~{2}([^\~]*)~{2}',         # ~~strikethrough~~
+)
+_EMOJI_RE = re.compile(
+    "[\U0001F300-\U0001F9FF"
+    "\U0001FA00-\U0001FA6F"
+    "\U0001FA70-\U0001FAFF"
+    "\U00002702-\U000027B0"
+    "\U0000FE00-\U0000FE0F"
+    "\U00010000-\U0010FFFF]+",
+    flags=re.UNICODE,
+)
+
+
+def clean_for_tts(text: str) -> str:
+    """Strip all markdown formatting and emoji so TTS reads cleanly."""
+    text = _MD_RE.sub(lambda m: m.group(1) or m.group(2) or m.group(3) or m.group(4) or '', text)
+    text = _EMOJI_RE.sub('', text)
+    text = re.sub(r'\n+', ' ', text)
+    text = re.sub(r'\s{2,}', ' ', text)
+    return text.strip()
 
 _EL_KEY     = os.getenv("ELEVENLABS_API_KEY", "")
 _EL_VOICE   = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
@@ -50,7 +82,11 @@ async def synthesize(text: str, params: dict | None = None) -> bytes | None:
     """
     Synthesize speech. Returns MP3 bytes or None on failure.
     Priority: ElevenLabs (quality adaptive voice) → gTTS (free Korean fallback).
+    Text is auto-sanitised (markdown + emoji stripped) before synthesis.
     """
+    text = clean_for_tts(text)
+    if not text:
+        return None
     if _EL_ENABLED:
         audio = await _el_synthesize(text, params)
         if audio:

@@ -410,7 +410,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 await manager.broadcast_hud({"type": "remote_speaking", "message": text})
                 await dispatcher.emit({"type": "orb_react", "intensity": 0.6, "duration": 500},
                                       Priority.NORMAL)
-                reply = jarvis.chat(text)
+                reply = await asyncio.to_thread(jarvis.chat, text)
                 await ws.send_json({"type": "chat_response", "message": reply})
                 await dispatcher.emit({"type": "chat_response", "query": text, "message": reply},
                                       Priority.HIGH)
@@ -438,8 +438,13 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 lon  = float(data.get("lon", 0))
                 # Store live GPS in device context (used by weather service)
                 from core.device_context import device_ctx as _dc
+                old_zone = _dc._phone.get("zone", "unknown")
                 _dc.update_phone({"lat": lat, "lon": lon})
                 zone = classify_location(lat, lon)
+                _dc.update_phone({"zone": zone})
+                # Fire zone-change proactive alert
+                if zone != old_zone:
+                    asyncio.create_task(proactive_time_agent.on_zone_change(zone, old_zone))
                 fm   = FocusMode(data.get("focus_mode", "none"))
                 route = decide_output(
                     location=zone,
@@ -697,7 +702,13 @@ async def stream_endpoint(ws: WebSocket) -> None:
 
                 elif msg_type == "phone_status":
                     from core.device_context import device_ctx
+                    prev_bat = device_ctx._phone.get("battery", 100)
                     device_ctx.update_phone(data)
+                    new_bat = int(data.get("battery", 100))
+                    if new_bat <= 20 and new_bat < prev_bat:
+                        asyncio.create_task(
+                            proactive_time_agent.on_phone_battery_drop(new_bat, prev_bat)
+                        )
 
                 elif msg_type == "ping":
                     await ws.send_json({"type": "pong"})
