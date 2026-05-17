@@ -14,6 +14,13 @@ Data sources:
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone, timedelta
+
+_KST = timezone(timedelta(hours=9))
+
+
+def _kst_now() -> str:
+    return datetime.now(_KST).strftime("%H:%M")
 
 
 class DeviceContext:
@@ -51,7 +58,7 @@ class DeviceContext:
         if not self.has_data():
             return ""
 
-        lines = [f"[DEVICE CONTEXT — {time.strftime('%H:%M')}]"]
+        lines = [f"[DEVICE CONTEXT — {_kst_now()} KST]"]
 
         if self._phone:
             p   = self._phone
