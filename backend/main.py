@@ -392,7 +392,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             manager.remote.append(ws)
             fury.on_connect()
             await ws.send_json({"type": "connected", "device": "remote",
-                                "neural_link": "active"})
+                                "neural_link": "active",
+                                "simulation_mode": _SIMULATION})
             await manager.broadcast_hud({"type": "remote_connected",
                                          "count": manager.remote_count,
                                          "fury":  fury.status()})
