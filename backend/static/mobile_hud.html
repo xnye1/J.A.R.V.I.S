@@ -482,6 +482,16 @@ document.getElementById('txt-input').addEventListener('keydown', e => {
 const audioCtx   = new (window.AudioContext || window.webkitAudioContext)();
 const audioQueue = [];
 let   _playing   = false;
+let   _currentSrc = null;
+
+function stopAudio() {
+  audioQueue.length = 0;
+  _playing = false;
+  if (_currentSrc) {
+    try { _currentSrc.stop(); } catch(e) {}
+    _currentSrc = null;
+  }
+}
 
 function enqueueAudio(b64) {
   audioQueue.push(b64);
@@ -489,7 +499,7 @@ function enqueueAudio(b64) {
 }
 
 function _playNext() {
-  if (audioQueue.length === 0) { _playing = false; return; }
+  if (audioQueue.length === 0) { _playing = false; _currentSrc = null; return; }
   _playing = true;
   const b64   = audioQueue.shift();
   const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
@@ -497,6 +507,7 @@ function _playNext() {
   audioCtx.decodeAudioData(bytes.buffer.slice(0),
     decoded => {
       const src = audioCtx.createBufferSource();
+      _currentSrc = src;
       src.buffer = decoded;
       src.connect(audioCtx.destination);
       src.start(0);
@@ -527,6 +538,7 @@ let _rec = null, _chunks = [], _recMime = '';
 
 async function startVoice() {
   if (!IS_HTTPS || _rec || _busy || ws.readyState !== WebSocket.OPEN) return;
+  stopAudio();  // clear any queued/playing audio before recording
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     _recMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
