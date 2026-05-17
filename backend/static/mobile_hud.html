@@ -226,6 +226,8 @@ function connect() {
 
   ws.onopen = () => {
     _retryMs = 1000;
+    _busy    = false;  // reset if WS dropped mid-stream
+    document.getElementById('send-btn').disabled = false;
     setConn(true);
     reportPhoneBattery();
   };

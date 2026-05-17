@@ -140,8 +140,11 @@ class ProactiveAgent:
         await self._push(text)
 
     async def _study_nudge(self, now: datetime) -> None:
+        weak_subject = await _fetch_weakest_subject()
+        subject_hint = f"특히 '{weak_subject}' 과목이 약점으로 등록되어 있어 우선 집중 권장." if weak_subject else ""
         prompt = (
             f"현재 시각은 오후 {now.strftime('%H시 %M분')}입니다. "
+            f"{subject_hint} "
             "학습 집중 시간을 알리는 부드럽고 단호한 한마디를 해줘. "
             "포모도로 25분 세션 시작을 권유해줘."
         )
@@ -275,3 +278,18 @@ def _format_calendar(events: list[dict]) -> str:
         return ""
     parts = [f"{e.get('time', '')} {e.get('title', '')}" for e in events[:4]]
     return ", ".join(p.strip() for p in parts if p.strip())
+
+
+async def _fetch_weakest_subject() -> str:
+    """Fetch the highest-priority weakness from the study plan DB."""
+    try:
+        async with httpx.AsyncClient(timeout=4) as client:
+            resp = await client.get("http://127.0.0.1:8000/study/plan?status=pending")
+            if resp.is_success:
+                plans = resp.json().get("plans", [])
+                if plans:
+                    top = plans[0]  # already ordered by weakness_level desc
+                    return f"{top.get('subject','')} — {top.get('topic','')}"
+    except Exception:
+        pass
+    return ""

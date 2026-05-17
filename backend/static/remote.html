@@ -335,6 +335,8 @@ function connect() {
   ws.onopen = () => {
     ws.send(JSON.stringify({ type: 'register', device: 'remote' }));
     dot.className = 'dot on'; lbl.textContent = 'ONLINE';
+    _streaming = false;  // reset if WS dropped mid-stream
+    document.getElementById('send-btn').disabled = false;
     reportBattery();
   };
 
