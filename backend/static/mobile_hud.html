@@ -52,6 +52,15 @@ html, body {
 .sc-v.warn { color: var(--alert); }
 .sc-v.ok   { color: var(--green); }
 
+/* weather strip */
+#weather-strip {
+  flex-shrink: 0; display: flex; align-items: center; gap: 8px;
+  padding: 3px 14px; font-size: 10px; color: var(--muted);
+  border-bottom: 1px solid rgba(0,242,255,.07);
+}
+#weather-strip .wc { color: var(--cyan); font-weight: 700; }
+#weather-strip .wm { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* feed */
 #feed-wrap { flex: 1; overflow-y: auto; padding: 10px 14px; scrollbar-width: none; }
 #feed-wrap::-webkit-scrollbar { display: none; }
@@ -165,6 +174,12 @@ html, body {
     <div class="sc"><div class="sc-l">RAM</div><div class="sc-v" id="s-ram">--%</div></div>
     <div class="sc"><div class="sc-l">LAPTOP</div><div class="sc-v" id="s-bat">--%</div></div>
     <div class="sc"><div class="sc-l">DISK</div><div class="sc-v" id="s-disk">--%</div></div>
+  </div>
+
+  <div id="weather-strip">
+    <span class="wc" id="w-temp">--°C</span>
+    <span id="w-cond">--</span>
+    <span class="wm" id="w-meal">급식: --</span>
   </div>
 
   <div id="feed-wrap"><div id="feed"></div></div>
@@ -301,7 +316,20 @@ function onMsg(msg) {
       // JARVIS initiated the conversation — show in feed
       addMsg('JARVIS', msg.text, 'j');
       break;
+
+    case 'school_update':
+      updateWeather(msg);
+      break;
   }
+}
+
+function updateWeather(d) {
+  const temp = d.temp_c ?? d.temp;
+  const cond = d.condition || '';
+  const meal = d.meal_preview || '';
+  if (temp !== undefined) document.getElementById('w-temp').textContent = temp + '°C';
+  if (cond) document.getElementById('w-cond').textContent = cond;
+  if (meal) document.getElementById('w-meal').textContent = '급식: ' + meal;
 }
 
 // ── Feed helpers ──────────────────────────────────────────────────────────────

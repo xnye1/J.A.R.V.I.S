@@ -231,24 +231,37 @@ async def _status_broadcaster() -> None:
 # ── Mock service report broadcaster ──────────────────────────────────────────
 
 async def _mock_service_broadcaster() -> None:
-    """Every 10 s, collect mock_report() from each service and push to HUD."""
+    """Every 10 s, collect mock_report() from each service and push to all clients."""
     while True:
         await asyncio.sleep(10)
-        if manager.hud_count == 0 or state.energy_saving:
+        any_client = manager.hud_count + manager.remote_count + manager.streaming_count
+        if any_client == 0 or state.energy_saving:
             continue
+
         for svc in registry._svcs.values():
             try:
                 report = svc.mock_report()
-                if report:
+                if not report:
+                    continue
+                # Push to HUD via dispatcher
+                if manager.hud_count > 0:
                     await dispatcher.emit(report, Priority.LOW)
+                # Push school/weather update directly to phone clients
+                if report.get("type") == "school_update":
+                    payload = {"type": "school_update", **report.get("data", {})}
+                    if manager.remote_count > 0:
+                        await manager.broadcast_remote(payload)
+                    if manager.streaming_count > 0:
+                        await manager.broadcast_streaming(payload)
             except Exception:
                 pass
-        snap = anger.snapshot()
-        priority = Priority.HIGH if snap["gauge"] >= 80 else Priority.LOW
-        await dispatcher.emit({"type": "anger_update", **snap}, priority)
 
-        emp = empathy.snapshot()
-        await dispatcher.emit({"type": "empathy_update", **emp}, Priority.LOW)
+        if manager.hud_count > 0:
+            snap = anger.snapshot()
+            priority = Priority.HIGH if snap["gauge"] >= 80 else Priority.LOW
+            await dispatcher.emit({"type": "anger_update", **snap}, priority)
+            emp = empathy.snapshot()
+            await dispatcher.emit({"type": "empathy_update", **emp}, Priority.LOW)
 
 
 async def _fury_ticker() -> None:
