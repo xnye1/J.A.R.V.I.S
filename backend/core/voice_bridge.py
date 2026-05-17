@@ -47,12 +47,21 @@ def gauge_to_voice_params(gauge: float) -> dict:
 # ── ElevenLabs synthesis ──────────────────────────────────────────────────────
 
 async def synthesize(text: str, params: dict | None = None) -> bytes | None:
-    """Call ElevenLabs. Returns MP3 bytes or None if unavailable."""
-    if not _EL_ENABLED:
-        log.debug("ElevenLabs key absent — TTS skipped.")
-        return None
+    """
+    Synthesize speech. Returns MP3 bytes or None on failure.
+    Priority: ElevenLabs (quality adaptive voice) → gTTS (free Korean fallback).
+    """
+    if _EL_ENABLED:
+        audio = await _el_synthesize(text, params)
+        if audio:
+            return audio
 
-    # Default: compute from live anger gauge
+    # Fallback: gTTS (no API key needed)
+    return await _gtts_synthesize(text)
+
+
+async def _el_synthesize(text: str, params: dict | None = None) -> bytes | None:
+    """ElevenLabs TTS — returns bytes or None."""
     if params is None:
         try:
             from core.anger_engine import anger as _anger
@@ -72,8 +81,24 @@ async def synthesize(text: str, params: dict | None = None) -> bytes | None:
             r.raise_for_status()
             return r.content
         except Exception as exc:
-            log.warning("TTS synthesis error: %s", exc)
+            log.warning("ElevenLabs TTS error: %s", exc)
             return None
+
+
+async def _gtts_synthesize(text: str) -> bytes | None:
+    """gTTS fallback — free, no API key, Korean only."""
+    import asyncio, io
+    def _synth():
+        try:
+            from gtts import gTTS
+            buf = io.BytesIO()
+            gTTS(text=text, lang="ko", slow=False).write_to_fp(buf)
+            buf.seek(0)
+            return buf.read()
+        except Exception as exc:
+            log.debug("gTTS error: %s", exc)
+            return None
+    return await asyncio.to_thread(_synth)
 
 
 # ── Routing + delivery ────────────────────────────────────────────────────────
