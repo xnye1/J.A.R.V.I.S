@@ -257,7 +257,7 @@ html, body {
   <div id="quick">
     <div class="qbtn" onclick="quickSend('상태 보고해')">📊 상태 보고</div>
     <div class="qbtn" onclick="triggerBriefing('morning')">🌅 모닝 브리핑</div>
-    <div class="qbtn" onclick="quickSend('집중 모드 시작해줘')">🎯 집중 모드</div>
+    <div class="qbtn" onclick="toggleFocus()">🎯 집중 모드</div>
     <div class="qbtn" onclick="resetConv()">🔄 초기화</div>
     <div class="qbtn wide" onclick="sendTestSignal()">⚡ HUD 연결 테스트</div>
   </div>
@@ -481,6 +481,18 @@ async function triggerBriefing(trigger = 'morning') {
     if (!resp.ok) throw new Error(resp.status);
     addMsg('SYSTEM', 'JARVIS 브리핑이 전송되었습니다, Sir.', 's');
   } catch { addMsg('SYSTEM', '브리핑 요청 실패', 's'); }
+}
+
+async function toggleFocus() {
+  try {
+    const resp = await fetch('/focus/toggle', { method: 'POST' });
+    if (!resp.ok) throw new Error(resp.status);
+    const d = await resp.json();
+    const on = d.toggled === 'on';
+    if (ws?.readyState === 1)
+      ws.send(JSON.stringify({ type: on ? 'focus_start' : 'focus_end', minutes: 25 }));
+    addMsg('SYSTEM', on ? '포모도로 25분 집중 세션 시작, Sir.' : '집중 세션 종료, Sir.', 's');
+  } catch { quickSend('집중 모드 시작해줘'); }
 }
 
 function sendTestSignal() {

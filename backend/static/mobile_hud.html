@@ -194,7 +194,7 @@ html, body {
   <div id="quick">
     <div class="qb" onclick="send('상태 보고해')">📊 상태</div>
     <div class="qb" onclick="triggerBriefing('morning')">🌅 모닝 브리핑</div>
-    <div class="qb" onclick="send('집중 모드 시작')">🎯 집중</div>
+    <div class="qb" onclick="startFocus()">🎯 집중</div>
     <div class="qb" onclick="send('내 폰 배터리 얼마야')">🔋 배터리</div>
     <div class="qb" onclick="send('오늘 날씨 알려줘')">🌤 날씨</div>
     <div class="qb" onclick="clearFeed()">🗑 초기화</div>
@@ -391,6 +391,16 @@ async function triggerBriefing(trigger = 'morning') {
     if (!resp.ok) throw new Error(resp.status);
     addMsg('SYSTEM', 'JARVIS 브리핑이 전송되었습니다, Sir.', 's');
   } catch { addMsg('SYSTEM', '브리핑 요청 실패', 's'); }
+}
+
+async function startFocus() {
+  try {
+    const resp = await fetch('/focus/toggle', { method: 'POST' });
+    if (!resp.ok) throw new Error(resp.status);
+    const d = await resp.json();
+    const on = d.toggled === 'on';
+    addMsg('SYSTEM', on ? '포모도로 25분 집중 세션 시작, Sir.' : '집중 세션 종료, Sir.', 's');
+  } catch { send('집중 모드 시작'); }  // graceful fallback to chat
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
