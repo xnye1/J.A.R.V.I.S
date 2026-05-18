@@ -202,11 +202,15 @@ class DopamineGuard(BaseService):
 
         while self._session and not self._session.is_expired:
             detected = await asyncio.to_thread(self._scan_processes)
+            if self._session is None:   # end_session() may have cleared it during thread
+                break
             if detected:
                 await self._fire_distraction_alert(detected)
             await asyncio.sleep(POLL_INTERVAL)
 
-        if self._session and self._session.is_expired:
+        # Snapshot to avoid TOCTOU: session could become None between the two checks
+        sess = self._session
+        if sess is not None and sess.is_expired:
             await self.end_session(notify=True)
 
     @staticmethod

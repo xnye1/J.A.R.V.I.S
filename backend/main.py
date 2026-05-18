@@ -479,8 +479,11 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
             elif msg_type == "location":
                 # Phone GPS update → stealth routing + dorm tracking + Welcome Home
-                lat  = float(data.get("lat", 0))
-                lon  = float(data.get("lon", 0))
+                try:
+                    lat = float(data.get("lat", 0))
+                    lon = float(data.get("lon", 0))
+                except (ValueError, TypeError):
+                    continue
                 # Store live GPS in device context (used by weather service)
                 from core.device_context import device_ctx as _dc
                 old_zone = _dc._phone.get("zone", "unknown")
@@ -749,7 +752,10 @@ async def stream_endpoint(ws: WebSocket) -> None:
                     from core.device_context import device_ctx
                     prev_bat = device_ctx._phone.get("battery", 100)
                     device_ctx.update_phone(data)
-                    new_bat = int(data.get("battery", 100))
+                    try:
+                        new_bat = int(data.get("battery", 100))
+                    except (ValueError, TypeError):
+                        new_bat = 100
                     if new_bat <= 20 and new_bat < prev_bat:
                         asyncio.create_task(
                             proactive_time_agent.on_phone_battery_drop(new_bat, prev_bat)

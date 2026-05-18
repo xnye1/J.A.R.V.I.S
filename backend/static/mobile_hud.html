@@ -431,6 +431,7 @@ function reportPhoneBattery() {
   });
 }
 
+let _gpsInterval = null;
 function reportGPS() {
   if (!navigator.geolocation) { sttLine('GPS 미지원'); return; }
   const opts = { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 };
@@ -452,7 +453,9 @@ function reportGPS() {
     setTimeout(() => sttLine(''), 4000);
   };
   navigator.geolocation.getCurrentPosition(send, fail, opts);
-  setInterval(() => navigator.geolocation.getCurrentPosition(send, () => {}, opts), 600000);
+  // Clear previous interval to prevent accumulation on WS reconnect
+  if (_gpsInterval) clearInterval(_gpsInterval);
+  _gpsInterval = setInterval(() => navigator.geolocation.getCurrentPosition(send, () => {}, opts), 600000);
 }
 
 // ── Message dispatcher ────────────────────────────────────────────────────────

@@ -203,9 +203,9 @@ class JarvisPersona:
         topics    = briefing.get("critical_topics", [])
         dur_days  = briefing.get("duration_days", 1)
 
-        top_goal   = goals[0]["title"]    if goals  else "목표 미설정"
-        top_goal_p = goals[0]["progress"] if goals  else 0
-        weak_str   = ", ".join(f"{t['subject']} ({t['topic']})" for t in topics[:2]) or "없음"
+        top_goal   = goals[0].get("title",    "목표 미설정") if goals else "목표 미설정"
+        top_goal_p = goals[0].get("progress", 0)            if goals else 0
+        weak_str   = ", ".join(f"{t.get('subject','?')} ({t.get('topic','?')})" for t in topics[:2]) or "없음"
 
         sim_summary = (
             f"WEEKLY DIGEST  ·  최근 {sessions}일 기록\n"

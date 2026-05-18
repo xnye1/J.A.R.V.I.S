@@ -253,6 +253,7 @@ async def gigagenie_webhook(req: GigaGenieRequest):
         req.event.intent.extra.get("clientMessage")
         or (req.action.parameters.get("clientMessage") or {}).get("value")
         or req.utterance
+        or ""
     ).strip()
 
     if not utterance:

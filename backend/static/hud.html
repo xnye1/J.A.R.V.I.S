@@ -580,7 +580,10 @@ const typing=document.getElementById('typing');
 function addMsg(who,text,cls){
   const d=document.createElement('div');d.className='msg';
   d.innerHTML=`<div class="mwho ${cls}">${esc(who)}</div><div class="mbody ${cls}">${esc(text)}</div>`;
-  feed.appendChild(d);feed.parentElement.scrollTop=1e9;
+  feed.appendChild(d);
+  // Keep max 120 messages to prevent DOM bloat over long sessions
+  while(feed.children.length>120)feed.firstChild.remove();
+  feed.parentElement.scrollTop=1e9;
   msgCnt++;document.getElementById('b-msg').textContent=msgCnt;
 }
 
@@ -846,7 +849,8 @@ function drawRadar(){
 function sendCmd(){
   const inp=document.getElementById('cmd-input');
   const val=inp.value.trim();if(!val)return;
-  if(ws?.readyState===1)ws.send(JSON.stringify({type:'chat',message:val}));
+  if(ws?.readyState!==1){addEvt('Not connected — command not sent','al');return;}
+  ws.send(JSON.stringify({type:'chat',message:val}));
   addMsg('YOU ▶',val,'r');typing.classList.add('show');inp.value='';
   arcReact('PROCESSING',500);
 }
