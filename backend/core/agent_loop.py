@@ -106,6 +106,7 @@ class AgentLoop:
                 messages.append({
                     "role":         "tool",
                     "tool_call_id": tc_id,
+                    "name":         tc_name,   # needed for Gemini function_response
                     "content":      result,
                 })
 

@@ -74,14 +74,12 @@ def generate_with_tools(
     """
     Blocking tool-calling completion.
     Returns dict:
-      {"content": str, "tool_calls": None}            — final text answer
-      {"content": None, "tool_calls": list, "raw_message": dict}  — wants to call tools
+      {"content": str, "tool_calls": None}                         — final text answer
+      {"content": None, "tool_calls": list, "raw_message": dict}   — wants to call tools
     """
-    if not _cfg:
-        # Gemini path: tool calling not yet wired — fall back to plain generate
-        text = _gemini_generate(messages, system, max_tokens)
-        return {"content": text, "tool_calls": None}
-    return _oai_generate_with_tools(messages, tools, system, max_tokens)
+    if _cfg:
+        return _oai_generate_with_tools(messages, tools, system, max_tokens)
+    return _gemini_generate_with_tools(messages, tools, system, max_tokens)
 
 
 def stream(
@@ -127,11 +125,35 @@ def _oai_generate(messages: list[dict], system: str, max_tokens: int) -> str:
     raise last_exc  # type: ignore[misc]
 
 
+def _build_agent_messages(messages: list[dict], system: str) -> list[dict]:
+    """Build proper OpenAI-format messages for tool-calling (preserves tool role)."""
+    result = []
+    if system:
+        result.append({"role": "system", "content": system})
+    for m in messages:
+        role = m.get("role")
+        if role == "user":
+            result.append({"role": "user", "content": str(m.get("content", ""))})
+        elif role == "assistant":
+            raw = m.get("raw_message")
+            if isinstance(raw, dict) and raw.get("role") == "assistant":
+                result.append(raw)   # includes tool_calls field for proper multi-turn
+            else:
+                result.append({"role": "assistant", "content": str(m.get("content") or "")})
+        elif role == "tool":
+            result.append({
+                "role":         "tool",
+                "tool_call_id": m.get("tool_call_id", ""),
+                "content":      str(m.get("content", "")),
+            })
+    return result
+
+
 def _oai_generate_with_tools(
     messages: list[dict], tools: list[dict], system: str, max_tokens: int
 ) -> dict:
     client = _get_openai_client()
-    msgs   = _build_messages(messages, system)
+    msgs   = _build_agent_messages(messages, system)
     last_exc: Exception | None = None
     delay = 1.0
     for attempt in range(3):
@@ -144,15 +166,17 @@ def _oai_generate_with_tools(
             msg    = choice.message
             if msg.tool_calls:
                 return {
-                    "content":     msg.content,
-                    "tool_calls":  msg.tool_calls,
-                    "raw_message": {"role": "assistant", "content": msg.content,
-                                    "tool_calls": [
-                                        {"id": tc.id, "type": "function",
-                                         "function": {"name": tc.function.name,
-                                                      "arguments": tc.function.arguments}}
-                                        for tc in msg.tool_calls
-                                    ]},
+                    "content":    msg.content,
+                    "tool_calls": msg.tool_calls,
+                    "raw_message": {
+                        "role": "assistant", "content": msg.content,
+                        "tool_calls": [
+                            {"id": tc.id, "type": "function",
+                             "function": {"name": tc.function.name,
+                                          "arguments": tc.function.arguments}}
+                            for tc in msg.tool_calls
+                        ],
+                    },
                 }
             return {"content": msg.content or "", "tool_calls": None}
         except Exception as e:
@@ -178,7 +202,121 @@ def _oai_stream(
             yield delta
 
 
-# ── Gemini legacy ─────────────────────────────────────────────────────────────
+# ── Gemini ───────────────────────────────────────────────────────────────────
+
+def _gemini_generate_with_tools(
+    messages: list[dict], tools: list[dict], system: str, max_tokens: int
+) -> dict:
+    """Gemini function calling via google-genai SDK."""
+    import json, time as _time
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        return {"content": _gemini_generate(messages, system, max_tokens), "tool_calls": None}
+
+    client = genai.Client(api_key=API_KEY)
+
+    # Convert OpenAI tool schema → Gemini FunctionDeclaration
+    declarations = []
+    for t in tools:
+        fn    = t.get("function", {})
+        props = fn.get("parameters", {}).get("properties", {})
+        req   = fn.get("parameters", {}).get("required", [])
+        declarations.append(types.FunctionDeclaration(
+            name=fn.get("name", ""),
+            description=fn.get("description", ""),
+            parameters=types.Schema(
+                type_=types.Type.OBJECT,
+                properties={
+                    k: types.Schema(
+                        type_=types.Type.STRING,
+                        description=v.get("description", ""),
+                    )
+                    for k, v in props.items()
+                },
+                required=req,
+            ),
+        ))
+    gem_tools = types.Tool(function_declarations=declarations)
+
+    # Build Gemini Contents from message history
+    contents: list = []
+    for m in messages:
+        role    = m.get("role")
+        content = m.get("content", "")
+        if role == "user":
+            contents.append(types.Content(
+                role="user", parts=[types.Part.from_text(str(content))],
+            ))
+        elif role == "assistant":
+            stored = m.get("_gemini_raw")
+            if stored is not None:
+                contents.append(stored)      # reuse original Gemini Content object
+            else:
+                contents.append(types.Content(
+                    role="model",
+                    parts=[types.Part.from_text(str(content) if content else " ")],
+                ))
+        elif role == "tool":
+            fn_name = m.get("name", m.get("tool_call_id", "tool"))
+            contents.append(types.Content(
+                role="user",
+                parts=[types.Part.from_function_response(
+                    name=fn_name,
+                    response={"result": str(content)},
+                )],
+            ))
+
+    try:
+        resp = client.models.generate_content(
+            model=LLM_MODEL,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                tools=[gem_tools],
+                system_instruction=system or None,
+                max_output_tokens=max_tokens,
+            ),
+        )
+    except Exception:
+        return {"content": _gemini_generate(messages, system, max_tokens), "tool_calls": None}
+
+    candidate = resp.candidates[0] if resp.candidates else None
+    if not candidate or not candidate.content:
+        return {"content": getattr(resp, "text", "") or "", "tool_calls": None}
+
+    fn_calls, text_parts = [], []
+    for part in (candidate.content.parts or []):
+        fc = getattr(part, "function_call", None)
+        if fc and getattr(fc, "name", None):
+            fn_calls.append((fc.name, dict(fc.args or {})))
+        txt = getattr(part, "text", None)
+        if txt:
+            text_parts.append(txt)
+
+    if fn_calls:
+        class _Fn:
+            def __init__(self, n, a): self.name = n; self.arguments = a
+        class _TC:
+            def __init__(self, i, f): self.id = i; self.function = f
+
+        ts = int(_time.time() * 1000)
+        fake_tcs = [
+            _TC(f"gcall_{name}_{ts+i}", _Fn(name, json.dumps(args)))
+            for i, (name, args) in enumerate(fn_calls)
+        ]
+        return {
+            "content":     None,
+            "tool_calls":  fake_tcs,
+            "raw_message": {
+                "role":        "assistant",
+                "content":     None,
+                "_gemini_raw": candidate.content,  # preserve for next turn
+            },
+        }
+
+    return {"content": "\n".join(text_parts) or getattr(resp, "text", "") or "", "tool_calls": None}
+
 
 def _gemini_generate(messages: list[dict], system: str, max_tokens: int) -> str:
     from google import genai

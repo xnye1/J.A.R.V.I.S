@@ -39,11 +39,12 @@ RECONNECT_S  = 5
 
 class BrowserSingleton:
     def __init__(self) -> None:
-        self._lock    = asyncio.Lock()
-        self._pw      = None
-        self._browser = None
-        self._page    = None     # HUD page
-        self._task_page = None   # page used for task browsing (separate from HUD)
+        self._lock      = asyncio.Lock()
+        self._pw        = None
+        self._browser   = None
+        self._page      = None      # HUD page
+        self._task_page = None      # task browsing tab
+        self._playwright_ok = False
 
     async def start(self) -> None:
         async with self._lock:
@@ -56,13 +57,15 @@ class BrowserSingleton:
                     headless=False,
                     args=["--start-maximized", "--disable-infobars"],
                 )
-                ctx            = await self._browser.new_context(no_viewport=True)
-                self._page     = await ctx.new_page()
-                self._task_page = await ctx.new_page()  # separate tab for tasks
+                ctx             = await self._browser.new_context(no_viewport=True)
+                self._page      = await ctx.new_page()
+                self._task_page = await ctx.new_page()
                 await self._page.goto(HUD_URL, wait_until="domcontentloaded")
+                self._playwright_ok = True
                 log.info("HUD opened: %s", HUD_URL)
             except Exception as exc:
-                log.error("Browser launch failed: %s", exc)
+                log.warning("Playwright unavailable (%s) — browser tools limited.", exc)
+                self._playwright_ok = False
                 await self._cleanup()
 
     async def navigate(self, url: str) -> str:
@@ -152,7 +155,19 @@ async def execute_tool(name: str, args: dict) -> str:
             return _shell_execute(args.get("command", ""))
 
         elif name == "open_url":
-            return await browser.navigate(args.get("url", "about:blank"))
+            url = args.get("url", "about:blank")
+            if browser._playwright_ok:
+                return await browser.navigate(url)
+            # Playwright not available — use system default browser
+            import webbrowser
+            webbrowser.open(url)
+            return f"Opened {url} in default browser"
+
+        elif name == "launch_app":
+            return _launch_app(args.get("app", ""))
+
+        elif name == "get_active_window":
+            return _get_active_window()
 
         elif name == "browser_click":
             return await browser.click(args.get("selector", ""))
@@ -191,6 +206,64 @@ async def execute_tool(name: str, args: dict) -> str:
 
     except Exception as exc:
         return f"[tool error] {name}: {exc}"
+
+
+# ── App launcher ──────────────────────────────────────────────────────────────
+
+_APP_MAP: dict[str, str] = {
+    "chrome":      "start chrome",
+    "edge":        "start msedge",
+    "firefox":     "start firefox",
+    "notepad":     "notepad",
+    "calculator":  "calc",
+    "calc":        "calc",
+    "explorer":    "explorer",
+    "파일탐색기":   "explorer",
+    "vscode":      "code",
+    "code":        "code",
+    "spotify":     "start spotify",
+    "discord":     "start discord",
+    "steam":       "start steam",
+    "obs":         "start obs64",
+    "powershell":  "start powershell",
+    "cmd":         "start cmd",
+    "터미널":       "start cmd",
+    "메모장":       "notepad",
+    "계산기":       "calc",
+}
+
+
+def _launch_app(app: str) -> str:
+    app_lower = app.lower().strip()
+    cmd = _APP_MAP.get(app_lower, f"start {app}")
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
+            capture_output=True, text=True, timeout=10,
+            encoding="utf-8", errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        if result.returncode == 0:
+            return f"{app} 실행했습니다."
+        return f"실행 실패 (rc={result.returncode}): {result.stderr[:200]}"
+    except Exception as exc:
+        return f"[launch error] {exc}"
+
+
+def _get_active_window() -> str:
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "(Get-Process | Where-Object { $_.MainWindowTitle } | "
+             "Sort-Object CPU -Descending | Select-Object -First 1).MainWindowTitle"],
+            capture_output=True, text=True, timeout=8,
+            encoding="utf-8", errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        title = result.stdout.strip()
+        return title or "활성 창을 찾을 수 없습니다."
+    except Exception as exc:
+        return f"[error] {exc}"
 
 
 def _shell_execute(command: str) -> str:

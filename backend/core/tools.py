@@ -133,6 +133,39 @@ TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "launch_app",
+            "description": (
+                "Launch an application on the user's Windows laptop. "
+                "Use for opening programs like chrome, edge, notepad, calculator, "
+                "explorer, vscode, spotify, etc."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "app": {
+                        "type": "string",
+                        "description": (
+                            "Application name or executable. Common names: "
+                            "chrome, edge, firefox, notepad, calculator, explorer, "
+                            "vscode, spotify, discord, steam, obs, powershell, cmd"
+                        ),
+                    }
+                },
+                "required": ["app"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_active_window",
+            "description": "Get the title of the currently active window on the laptop.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
 ]
 
 TOOL_NAMES = {t["function"]["name"] for t in TOOLS}

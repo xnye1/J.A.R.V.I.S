@@ -597,6 +597,9 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             fury.on_disconnect()
             await manager.broadcast_hud({"type": "remote_disconnected",
                                          "count": manager.remote_count})
+        elif device == "laptop":
+            await manager.broadcast_hud({"type": "service_offline",
+                                         "service": "Laptop Agent"})
 
 
 # ── /ws/stream — iPhone full-duplex streaming endpoint ───────────────────────
