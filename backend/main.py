@@ -19,7 +19,7 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
@@ -336,6 +336,21 @@ async def remote_page():
 @app.get("/mobile", response_class=HTMLResponse)
 async def mobile_page():
     return HTMLResponse((STATIC / "mobile_hud.html").read_text(encoding="utf-8"))
+
+@app.get("/manifest.json")
+async def pwa_manifest():
+    return JSONResponse(
+        content=__import__("json").loads((STATIC / "manifest.json").read_text()),
+        headers={"Content-Type": "application/manifest+json"},
+    )
+
+@app.get("/icons/{filename}")
+async def pwa_icon(filename: str):
+    icon_path = STATIC / "icons" / filename
+    if not icon_path.exists() or not filename.endswith(".png"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404)
+    return FileResponse(str(icon_path), media_type="image/png")
 
 
 # ── Proactive manual trigger (testing / on-demand briefings) ──────────────────
