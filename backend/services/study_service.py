@@ -1,13 +1,11 @@
 """
-services/study_service.py — Study Coach skeleton.
+services/study_service.py — Real Study Coach.
 
-Features (D-Day injection targets):
-  - Pomodoro study timer with subject tracking
-  - Exam D-Day countdown & milestone alerts
-  - Spaced-repetition quiz generator
-  - Progress heatmap data provider
-
-All methods return mock data until Phase 16 AI injection.
+Data sources:
+  • state.daily_study_stats()   → live focus sessions / minutes / distractions
+  • Homework DB table           → nearest upcoming deadline (D-Day)
+  • StudyPlan DB table          → real weak-subject quiz targets
+  • DopamineGuard active flag   → current session status
 """
 
 from __future__ import annotations
@@ -17,28 +15,19 @@ from datetime import date, timedelta
 from typing import Any
 
 from core.dispatcher import Priority
+from core.state import state
 from services.base_service import BaseService
 
-# ── Mock data pools ───────────────────────────────────────────────────────────
-
-_SUBJECTS = [
-    "Python Algorithms", "Linear Algebra", "System Design",
-    "English Vocabulary", "Discrete Math", "OS Concepts",
-]
-_STATUS = ["Excellent", "Good", "Review Needed", "Behind Schedule"]
-_TIPS   = [
-    "Recall beats re-reading — close the book and write what you remember.",
-    "Interleave subjects: switch every 25 min for better retention.",
-    "Sleep is non-negotiable for memory consolidation, Sir.",
-    "Teach it to explain it — the Feynman technique works.",
+_TIPS = [
+    "복습보다 회상 — 책 덮고 기억나는 것부터 적으세요, Sir.",
+    "과목을 25분마다 전환하면 장기 기억 효율이 올라갑니다.",
+    "수면은 협상 불가능합니다 — 기억 고착화는 자는 동안 일어납니다, Sir.",
+    "파인만 기법: 설명할 수 없으면 아직 모르는 겁니다.",
+    "능동적 인출 연습이 재독보다 2배 이상 효과적입니다.",
 ]
 
 
 class StudyService(BaseService):
-    """
-    Study coach — tracks sessions, exams, and quiz progress.
-    Phase 16: integrate with real calendar + spaced-repetition engine.
-    """
 
     @property
     def name(self) -> str:
@@ -54,62 +43,88 @@ class StudyService(BaseService):
     async def stop(self) -> None:
         self._mark_offline()
 
-    # ── Mock API surface ──────────────────────────────────────────────────────
+    # ── Real API ──────────────────────────────────────────────────────────────
 
     def get_session_status(self) -> dict[str, Any]:
-        """Current study session snapshot."""
+        """Live study stats from state singleton (updated by DopamineGuard)."""
+        stats   = state.daily_study_stats()
+        active  = state.dopamine_guard_active
         return {
-            "subject":         random.choice(_SUBJECTS),
-            "elapsed_minutes": random.randint(5, 90),
-            "progress_pct":    random.randint(35, 98),
-            "status":          random.choice(_STATUS),
-            "tip":             random.choice(_TIPS),
+            "active":            active,
+            "sessions_today":    stats["sessions"],
+            "study_minutes":     stats["minutes"],
+            "distraction_hits":  stats["distractions"],
+            "tip":               random.choice(_TIPS),
         }
 
-    def get_dday(self, exam_name: str = "Final Exam") -> dict[str, Any]:
-        """Days remaining to next exam."""
-        days_left = random.randint(3, 60)
-        exam_date = (date.today() + timedelta(days=days_left)).isoformat()
-        return {
-            "exam":      exam_name,
-            "date":      exam_date,
-            "days_left": days_left,
-            "urgency":   "CRITICAL" if days_left < 7 else "HIGH" if days_left < 21 else "NORMAL",
-        }
+    def get_dday(self) -> dict[str, Any]:
+        """Nearest pending homework deadline from DB."""
+        from db.database import SessionLocal, Homework
+        today_str = date.today().isoformat()
 
-    def get_quiz(self, subject: str | None = None) -> dict[str, Any]:
-        """Next spaced-repetition quiz card (mock)."""
-        subj = subject or random.choice(_SUBJECTS)
-        return {
-            "subject":     subj,
-            "question":    f"[MOCK] Explain the key concept of {subj} in two sentences.",
-            "difficulty":  random.choice(["Easy", "Medium", "Hard"]),
-            "due_count":   random.randint(0, 8),
-            "retention_pct": random.randint(55, 95),
-        }
+        try:
+            with SessionLocal() as db:
+                hw = (
+                    db.query(Homework)
+                    .filter(Homework.status == "pending")
+                    .filter(Homework.deadline.isnot(None))
+                    .filter(Homework.deadline >= today_str)
+                    .order_by(Homework.deadline)
+                    .first()
+                )
+                if hw:
+                    days_left = (date.fromisoformat(hw.deadline) - date.today()).days
+                    return {
+                        "exam":      f"{hw.subject}: {hw.title}",
+                        "date":      hw.deadline,
+                        "days_left": days_left,
+                        "urgency":   "CRITICAL" if days_left <= 1
+                                     else "HIGH"   if days_left <= 3
+                                     else "NORMAL",
+                    }
+        except Exception:
+            pass
 
-    def get_weekly_heatmap(self) -> dict[str, Any]:
-        """7-day study activity heatmap data."""
-        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        return {
-            "heatmap": {d: random.randint(0, 4) for d in days},
-            "total_hours": round(random.uniform(5, 25), 1),
-            "best_day": random.choice(days),
-        }
+        return {"exam": "없음", "date": None, "days_left": None, "urgency": "NORMAL"}
+
+    def get_weak_subject(self) -> dict[str, Any]:
+        """Top weak subject from StudyPlan DB for proactive nudge."""
+        from db.database import SessionLocal, StudyPlan
+        try:
+            with SessionLocal() as db:
+                plan = (
+                    db.query(StudyPlan)
+                    .filter(StudyPlan.status != "mastered")
+                    .order_by(StudyPlan.weakness_level.desc())
+                    .first()
+                )
+                if plan:
+                    return {
+                        "subject":         plan.subject,
+                        "topic":           plan.topic,
+                        "weakness_level":  plan.weakness_level,
+                    }
+        except Exception:
+            pass
+        return {}
 
     # ── Broadcaster hook ──────────────────────────────────────────────────────
 
     def mock_report(self) -> dict:
         sess = self.get_session_status()
         dd   = self.get_dday()
+
+        dday_label = f"D-{dd['days_left']}" if dd["days_left"] is not None else "없음"
+
         return {
             "type": "study_update",
             "data": {
-                "subject":     sess["subject"],
-                "progress":    sess["progress_pct"],
-                "status":      sess["status"],
-                "session_min": sess["elapsed_minutes"],
-                "dday":        f"D-{dd['days_left']}",
-                "quiz_due":    self.get_quiz()["due_count"],
+                "active":      sess["active"],
+                "sessions":    sess["sessions_today"],
+                "minutes":     sess["study_minutes"],
+                "distractions": sess["distraction_hits"],
+                "dday":        dday_label,
+                "dday_exam":   dd["exam"],
+                "dday_urgency": dd["urgency"],
             },
         }

@@ -437,12 +437,24 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 if not text:
                     continue
                 fury.on_message(focus_active=state.dopamine_guard_active)
-                # Only echo remote_speaking to HUD when the sender is NOT the HUD itself
-                # (HUD already adds the user message locally on send)
                 if device != "hud":
                     await manager.broadcast_hud({"type": "remote_speaking", "message": text})
                 await dispatcher.emit({"type": "orb_react", "intensity": 0.6, "duration": 500},
                                       Priority.NORMAL)
+
+                # ── Task command detection (runs before LLM) ──────────────
+                from services.productivity_service import ProductivityService
+                _prod: ProductivityService | None = registry.get("productivity_service")
+                _task_ctx = ""
+                if _prod:
+                    _acted, _summary = await asyncio.to_thread(_prod.parse_and_execute, text)
+                    if _acted:
+                        _task_ctx = f"\n\n[TASK SYSTEM: {_summary}]"
+                        await dispatcher.emit({
+                            "type":    "task_update",
+                            "message": _summary,
+                        }, Priority.NORMAL)
+                lm_input = text + _task_ctx
 
                 if manager.laptop_count > 0:
                     # ── Agent mode: laptop connected, use tool-calling loop ──
@@ -458,12 +470,12 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
                     agent = get_or_create(sess_id, manager.broadcast_laptop, _progress)
                     try:
-                        reply = await agent.run(text)
+                        reply = await agent.run(lm_input)
                     finally:
                         remove_agent(sess_id)
                 else:
                     # ── Chat mode: no laptop agent connected ──
-                    reply = await asyncio.to_thread(jarvis.chat, text)
+                    reply = await asyncio.to_thread(jarvis.chat, lm_input)
 
                 # Remote gets reply directly; HUD gets it via dispatcher — never both
                 if device != "hud":

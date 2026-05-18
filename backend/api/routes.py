@@ -661,6 +661,62 @@ async def study_stats_today():
     return state.daily_study_stats()
 
 
+# ── Task board (Homework CRUD) ────────────────────────────────────────────────
+
+@router.get("/tasks")
+async def list_tasks(status: str = "pending"):
+    """List tasks/homework filtered by status."""
+    from services.productivity_service import ProductivityService
+    svc: ProductivityService | None = _registry.get("productivity_service") if _registry else None
+    if svc is None:
+        raise HTTPException(status_code=503, detail="ProductivityService not available.")
+    return {"tasks": svc.list_tasks(status=status)}
+
+
+@router.post("/tasks")
+async def add_task(subject: str, title: str,
+                   deadline: str | None = None, priority: str = "normal"):
+    """Add a new task/homework item."""
+    from services.productivity_service import ProductivityService
+    svc: ProductivityService | None = _registry.get("productivity_service") if _registry else None
+    if svc is None:
+        raise HTTPException(status_code=503, detail="ProductivityService not available.")
+    task = svc.add_task(subject=subject, title=title, deadline=deadline, priority=priority)
+    await dispatcher.emit({
+        "type":    "task_added",
+        "message": f"[할 일 추가] [{subject}] {title}",
+        "task":    task,
+    }, Priority.NORMAL)
+    return task
+
+
+@router.patch("/tasks/{task_id}/done")
+async def complete_task(task_id: int):
+    """Mark a task as done."""
+    from services.productivity_service import ProductivityService
+    svc: ProductivityService | None = _registry.get("productivity_service") if _registry else None
+    if svc is None:
+        raise HTTPException(status_code=503, detail="ProductivityService not available.")
+    ok = svc.complete_task(task_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    await dispatcher.emit({"type": "task_done", "task_id": task_id}, Priority.NORMAL)
+    return {"status": "done", "task_id": task_id}
+
+
+@router.delete("/tasks/{task_id}")
+async def delete_task(task_id: int):
+    """Delete a task."""
+    from services.productivity_service import ProductivityService
+    svc: ProductivityService | None = _registry.get("productivity_service") if _registry else None
+    if svc is None:
+        raise HTTPException(status_code=503, detail="ProductivityService not available.")
+    ok = svc.delete_task(task_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    return {"status": "deleted", "task_id": task_id}
+
+
 @router.get("/study/plan")
 async def study_plan_list(status: str = "pending"):
     """List study plan entries, ordered by weakness level descending."""
