@@ -422,7 +422,10 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 if not text:
                     continue
                 fury.on_message(focus_active=state.dopamine_guard_active)
-                await manager.broadcast_hud({"type": "remote_speaking", "message": text})
+                # Only echo remote_speaking to HUD when the sender is NOT the HUD itself
+                # (HUD already adds the user message locally on send)
+                if device != "hud":
+                    await manager.broadcast_hud({"type": "remote_speaking", "message": text})
                 await dispatcher.emit({"type": "orb_react", "intensity": 0.6, "duration": 500},
                                       Priority.NORMAL)
 
