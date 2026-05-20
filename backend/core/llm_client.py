@@ -152,6 +152,8 @@ def _build_agent_messages(messages: list[dict], system: str) -> list[dict]:
 def _oai_generate_with_tools(
     messages: list[dict], tools: list[dict], system: str, max_tokens: int
 ) -> dict:
+    import logging as _log
+    _logger = _log.getLogger("jarvis.llm")
     client = _get_openai_client()
     msgs   = _build_agent_messages(messages, system)
     last_exc: Exception | None = None
@@ -181,8 +183,13 @@ def _oai_generate_with_tools(
             return {"content": msg.content or "", "tool_calls": None}
         except Exception as e:
             last_exc = e
+            err_str = str(e)
             if _is_rate_limit(e) and attempt < 2:
                 time.sleep(delay); delay *= 2
+            elif "400" in err_str:
+                # Model doesn't support tool calling — fall back to plain generation
+                _logger.warning("Tool calling 400 error (model=%s), falling back to plain chat: %s", LLM_MODEL, e)
+                return {"content": _oai_generate(messages, system, max_tokens), "tool_calls": None}
             else:
                 break
     raise last_exc  # type: ignore[misc]

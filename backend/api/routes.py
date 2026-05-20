@@ -181,13 +181,20 @@ async def chat_stream(req: ChatRequest):
             await dispatcher.emit({"type": "agent_progress", "message": msg}, Priority.NORMAL)
 
         async def _sse_agent():
+            import asyncio
             agent = get_or_create(sess_id, _manager.broadcast_laptop, _progress)
+            reply = None
             try:
                 reply = await agent.run(req.message)
             except Exception as exc:
-                reply = f"에이전트 오류가 발생했어요: {exc}"
+                log.warning("Agent loop failed (falling back to chat): %s", exc)
             finally:
                 remove_agent(sess_id)
+
+            # Fall back to regular LLM if agent failed
+            if reply is None:
+                reply = await asyncio.to_thread(jarvis.chat, req.message)
+
             m = _OPEN_RE.search(reply)
             if m:
                 yield f"data: {json.dumps({'cmd': 'open_url', 'url': m.group(1)}, ensure_ascii=False)}\n\n"
