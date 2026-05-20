@@ -159,32 +159,46 @@ async def speech_to_text(audio: UploadFile = File(...)):
 async def chat_stream(req: ChatRequest):
     """
     SSE streaming endpoint.
-    Each chunk is sent as:  data: {"chunk": "..."}\n\n
-    Final frame:            data: {"done": true}\n\n
-
-    JS example:
-      const resp = await fetch('/chat/stream', {method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({message: 'hello'})});
-      const reader = resp.body.getReader();
-      // read chunks until done
+    Laptop agent connected → tool-calling agent loop, result streamed on completion.
+    No laptop → direct LLM streaming chunk by chunk.
     """
+    import uuid as _uuid
     if not req.message.strip():
-        raise HTTPException(status_code=400, detail="Message cannot be empty, Sir.")
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
-    def _sse_generator():
+    _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+    # ── Agent mode: laptop connected → real tool execution ──────────────────────
+    if _manager and _manager.laptop_count > 0:
+        from core.agent_loop import get_or_create, remove as remove_agent
+
+        sess_id = f"rest_{_uuid.uuid4().hex[:8]}"
+
+        async def _progress(msg: str) -> None:
+            await dispatcher.emit({"type": "agent_progress", "message": msg}, Priority.NORMAL)
+
+        async def _sse_agent():
+            agent = get_or_create(sess_id, _manager.broadcast_laptop, _progress)
+            try:
+                reply = await agent.run(req.message)
+            except Exception as exc:
+                reply = f"에이전트 오류가 발생했어요: {exc}"
+            finally:
+                remove_agent(sess_id)
+            # Stream result token by token so HUD cursor animates
+            for ch in reply:
+                yield f"data: {json.dumps({'chunk': ch}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+
+        return StreamingResponse(_sse_agent(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+    # ── Chat mode: no laptop → LLM streaming ────────────────────────────────────
+    def _sse_sync():
         for chunk in jarvis.chat_stream(req.message):
             yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
         yield f"data: {json.dumps({'done': True})}\n\n"
 
-    return StreamingResponse(
-        _sse_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return StreamingResponse(_sse_sync(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
 # ── Reactor ───────────────────────────────────────────────────────────────────
