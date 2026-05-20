@@ -393,11 +393,17 @@ if (!IS_HTTPS) {
 const feed     = document.getElementById('feed');
 const feedWrap = document.getElementById('feed-wrap');
 
+function _nearBottom() {
+  return feedWrap.scrollHeight - feedWrap.scrollTop - feedWrap.clientHeight < 80;
+}
+function scrollToBottom()    { feedWrap.scrollTop = feedWrap.scrollHeight; }
+function scrollIfNearBottom() { if (_nearBottom()) scrollToBottom(); }
+
 function addMsg(who, text, cls) {
   const block = document.createElement('div'); block.className = 'msg-block';
   block.innerHTML = `<div class="msg-who ${cls}">${who}</div><div class="msg-text ${cls}">${text}</div>`;
   feed.appendChild(block);
-  feedWrap.scrollTop = feedWrap.scrollHeight;
+  scrollIfNearBottom();
 }
 
 function createStreamBubble() {
@@ -409,7 +415,7 @@ function createStreamBubble() {
   wrap.appendChild(span); wrap.appendChild(cur);
   block.appendChild(who); block.appendChild(wrap);
   feed.appendChild(block);
-  feedWrap.scrollTop = feedWrap.scrollHeight;
+  scrollIfNearBottom();
   return { span, cur };
 }
 
@@ -520,6 +526,7 @@ async function sendMsg(text) {
   document.getElementById('send-btn').disabled = true;
 
   addMsg('YOU', text, 'u');
+  scrollToBottom();
   if (ws?.readyState === 1)
     ws.send(JSON.stringify({ type: 'remote_speaking', message: text }));
 
@@ -548,7 +555,7 @@ async function sendMsg(text) {
           if (obj.done) { reader.cancel(); break; }
           fullReply += obj.chunk;
           bubble.span.textContent = fullReply;
-          feedWrap.scrollTop = feedWrap.scrollHeight;
+          scrollIfNearBottom();
         } catch {}
       }
     }
@@ -558,7 +565,7 @@ async function sendMsg(text) {
   }
 
   bubble.cur.remove();
-  feedWrap.scrollTop = feedWrap.scrollHeight;
+  scrollIfNearBottom();
   speak(fullReply);
 
   if (ws?.readyState === 1)

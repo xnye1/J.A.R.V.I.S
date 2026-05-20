@@ -492,14 +492,14 @@ function onMsg(msg) {
     case 'text_chunk':
       if (_streamBubble) {
         _streamBubble.span.textContent += msg.chunk;
-        scrollFeed();
+        scrollIfNearBottom();
       }
       break;
 
     case 'text_done':
       if (_streamBubble) { _streamBubble.cur.remove(); _streamBubble = null; }
       sttLine('');
-      scrollFeed();
+      scrollIfNearBottom();
       break;
 
     case 'audio_chunk':
@@ -560,14 +560,16 @@ function updateWeather(d) {
 const feedWrap = document.getElementById('feed-wrap');
 const feed     = document.getElementById('feed');
 
-function scrollFeed() { feedWrap.scrollTop = feedWrap.scrollHeight; }
+function _nearBottom() { return feedWrap.scrollHeight - feedWrap.scrollTop - feedWrap.clientHeight < 80; }
+function scrollFeed()        { feedWrap.scrollTop = feedWrap.scrollHeight; }
+function scrollIfNearBottom() { if (_nearBottom()) scrollFeed(); }
 
 function sttLine(t) { document.getElementById('stt-line').textContent = t; }
 
 function addMsg(who, text, cls) {
   const b = document.createElement('div'); b.className = 'mb';
   b.innerHTML = `<div class="mw ${cls}">${who}</div><div class="mt ${cls}">${text}</div>`;
-  feed.appendChild(b); scrollFeed();
+  feed.appendChild(b); scrollIfNearBottom();
 }
 
 function createStreamBubble() {
@@ -577,7 +579,7 @@ function createStreamBubble() {
   const s = document.createElement('span');
   const c = document.createElement('span'); c.className = 'stream-cursor';
   m.appendChild(s); m.appendChild(c); b.appendChild(w); b.appendChild(m);
-  feed.appendChild(b); scrollFeed();
+  feed.appendChild(b); scrollIfNearBottom();
   return { span: s, cur: c };
 }
 
@@ -626,6 +628,7 @@ function send(text) {
   _busy = true;
   document.getElementById('send-btn').disabled = true;
   addMsg('YOU', text, 'u');
+  scrollFeed();
   ws.send(JSON.stringify({ type: 'text', message: text }));
 }
 
