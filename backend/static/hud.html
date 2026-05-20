@@ -74,7 +74,7 @@ html,body{width:100%;height:100%;background:var(--bg);color:var(--txt);
   display:grid;
   grid-template-columns:248px 1fr 248px;
   grid-template-rows:48px 1fr 44px;
-  gap:7px;padding:7px;z-index:10;opacity:0;transition:opacity 1s}
+  gap:7px;padding:7px;z-index:10;opacity:0;transition:opacity 1s;overflow:hidden}
 #app.visible{opacity:1}
 
 /* ── TOP BAR ── */
@@ -114,7 +114,7 @@ html,body{width:100%;height:100%;background:var(--bg);color:var(--txt);
 .pi{padding:8px 11px}
 
 /* ── LEFT / RIGHT ── */
-#left,#right{display:flex;flex-direction:column;gap:7px}
+#left,#right{display:flex;flex-direction:column;gap:7px;min-height:0;overflow:hidden}
 
 /* sys rows */
 .srow{display:flex;align-items:center;justify-content:space-between;
@@ -166,7 +166,7 @@ html,body{width:100%;height:100%;background:var(--bg);color:var(--txt);
 
 /* ── CENTER ── */
 #center{display:flex;flex-direction:column;align-items:center;
-  position:relative;padding:10px 12px 0;overflow:hidden}
+  position:relative;padding:10px 12px 0;overflow:hidden;min-height:0}
 #casc-l,#casc-r{position:absolute;inset:0;z-index:0;pointer-events:none;transition:opacity .4s}
 body.static-mode #casc-l,body.static-mode #casc-r{opacity:0}
 
