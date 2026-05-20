@@ -351,6 +351,9 @@ body.static-mode .led,body.static-mode .svdot,body.static-mode .td{animation:non
   <div class="t-right">
     <div id="ws-chip"><div class="led" id="ws-led"></div><span id="ws-lbl">CONNECTING</span></div>
     <div id="clock">--:--:--</div>
+    <div id="ghost-btn" style="display:none;font-size:.6rem;letter-spacing:2px;color:rgba(0,212,255,.42);
+      cursor:pointer;padding:2px 7px;border:1px solid transparent;transition:color .2s,border-color .2s"
+      onclick="toggleElectronGhost()" title="Ghost 모드 (Ctrl+Shift+G)">👻 GHOST</div>
   </div>
 </div>
 
@@ -555,6 +558,25 @@ function navClick(el,mode){
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   el.classList.add('active');
   addEvt('Mode: '+mode,'hi');
+}
+
+// ── Electron overlay integration ──────────────────────────────────────────────
+const _isElectron = !!window.electronJarvis;
+if(_isElectron){
+  document.getElementById('ghost-btn').style.display='block';
+  document.body.style.background='transparent';
+  addEvt('Electron overlay mode active','hi');
+}
+let _ghostMode=false;
+function toggleElectronGhost(){
+  if(!_isElectron)return;
+  _ghostMode=!_ghostMode;
+  const btn=document.getElementById('ghost-btn');
+  if(btn){btn.style.color=_ghostMode?'var(--ylw)':'rgba(0,212,255,.42)';
+    btn.style.borderColor=_ghostMode?'rgba(251,191,36,.4)':'transparent';
+    btn.textContent=_ghostMode?'🌐 LIVE':'👻 GHOST';}
+  window.electronJarvis.toggleGhost();
+  addEvt(_ghostMode?'Ghost mode — click-through ON':'Ghost mode OFF','hi');
 }
 
 // ── UTIL ──

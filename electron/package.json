@@ -1,0 +1,27 @@
+{
+  "name": "jarvis-hud",
+  "version": "1.0.0",
+  "description": "J.A.R.V.I.S HUD Overlay — always-on-top desktop interface",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --x64"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.0"
+  },
+  "build": {
+    "appId": "com.yejun.jarvis-hud",
+    "productName": "JARVIS HUD",
+    "directories": { "output": "dist" },
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "runAfterFinish": true
+    }
+  }
+}
