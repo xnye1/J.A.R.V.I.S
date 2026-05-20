@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 log = logging.getLogger("jarvis.routes")
 
 import json
+
+_OPEN_RE = re.compile(r'\[OPEN:(https?://[^\]]+)\]')
 
 from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -185,7 +188,10 @@ async def chat_stream(req: ChatRequest):
                 reply = f"에이전트 오류가 발생했어요: {exc}"
             finally:
                 remove_agent(sess_id)
-            # Stream result token by token so HUD cursor animates
+            m = _OPEN_RE.search(reply)
+            if m:
+                yield f"data: {json.dumps({'cmd': 'open_url', 'url': m.group(1)}, ensure_ascii=False)}\n\n"
+                reply = _OPEN_RE.sub('', reply).strip()
             for ch in reply:
                 yield f"data: {json.dumps({'chunk': ch}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"
@@ -194,8 +200,13 @@ async def chat_stream(req: ChatRequest):
 
     # ── Chat mode: no laptop → LLM streaming ────────────────────────────────────
     def _sse_sync():
+        full = ''
         for chunk in jarvis.chat_stream(req.message):
+            full += chunk
             yield f"data: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
+        m = _OPEN_RE.search(full)
+        if m:
+            yield f"data: {json.dumps({'cmd': 'open_url', 'url': m.group(1)}, ensure_ascii=False)}\n\n"
         yield f"data: {json.dumps({'done': True})}\n\n"
 
     return StreamingResponse(_sse_sync(), media_type="text/event-stream", headers=_SSE_HEADERS)

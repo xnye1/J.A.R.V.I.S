@@ -931,8 +931,11 @@ async function sendCmd(){
       for(const p of parts){
         if(!p.startsWith('data: '))continue;
         try{const obj=JSON.parse(p.slice(6));
+          if(obj.cmd==='open_url'){window.open(obj.url,'_blank');addEvt('🌐 열기: '+obj.url,'hi');continue;}
           if(obj.done){reader.cancel();break outer;}
-          fullReply+=obj.chunk;bubble.span.textContent=fullReply;scrollIfNearBottom();
+          fullReply+=obj.chunk;
+          bubble.span.textContent=fullReply.replace(/\[OPEN:[^\]]+\]/g,'').trim();
+          scrollIfNearBottom();
         }catch{}
       }
     }
