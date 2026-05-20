@@ -228,6 +228,14 @@ body.static-mode #casc-l,body.static-mode #casc-r{opacity:0}
   color:var(--c);font-size:.72rem;padding:0 14px;cursor:pointer;height:100%;flex-shrink:0;
   font-family:'Orbitron',sans-serif;letter-spacing:1px;transition:background .15s}
 #cmd-send:hover{background:rgba(0,212,255,.22)}
+#mic-btn,#tts-btn{background:rgba(0,212,255,.06);border:none;border-left:1px solid rgba(0,212,255,.18);
+  color:rgba(0,212,255,.32);font-size:.82rem;padding:0 11px;cursor:pointer;height:100%;flex-shrink:0;
+  transition:color .15s,text-shadow .15s}
+#mic-btn:hover,#tts-btn:hover{color:var(--c);text-shadow:0 0 7px var(--c)}
+#mic-btn.active{color:var(--red);text-shadow:0 0 9px var(--red);animation:blink .6s infinite}
+#tts-btn.on{color:var(--c);text-shadow:0 0 7px var(--c)}
+.stream-cursor{display:inline-block;width:6px;height:.82em;background:var(--c);
+  margin-left:2px;vertical-align:middle;animation:blink .8s infinite}
 
 /* quick actions */
 #quick-actions{width:90%;max-width:500px;flex-shrink:0;z-index:2;
@@ -421,7 +429,9 @@ body.static-mode .led,body.static-mode .svdot,body.static-mode .td{animation:non
   </div>
 
   <div id="cmd-bar">
-    <input id="cmd-input" type="text" placeholder="Enter command, Sir..." autocomplete="off" spellcheck="false">
+    <input id="cmd-input" type="text" placeholder="Enter command..." autocomplete="off" spellcheck="false">
+    <button id="mic-btn" onclick="startVoice()" title="음성 입력"><i class="fas fa-microphone"></i></button>
+    <button id="tts-btn" onclick="toggleTTS()" title="TTS 토글"><i class="fas fa-volume-up"></i></button>
     <button id="cmd-send" onclick="sendCmd()">SEND</button>
   </div>
   <div id="quick-actions">
@@ -576,15 +586,32 @@ function showDeployBanner(msg,failed){
 
 // ── FEED ──
 const feed=document.getElementById('feed');
+const feedWrap=document.getElementById('feed-wrap');
 const typing=document.getElementById('typing');
+function _nearBottom(){return feedWrap.scrollHeight-feedWrap.scrollTop-feedWrap.clientHeight<80;}
+function scrollToBottom(){feedWrap.scrollTop=feedWrap.scrollHeight;}
+function scrollIfNearBottom(){if(_nearBottom())scrollToBottom();}
 function addMsg(who,text,cls){
   const d=document.createElement('div');d.className='msg';
   d.innerHTML=`<div class="mwho ${cls}">${esc(who)}</div><div class="mbody ${cls}">${esc(text)}</div>`;
   feed.appendChild(d);
-  // Keep max 120 messages to prevent DOM bloat over long sessions
   while(feed.children.length>120)feed.firstChild.remove();
-  feed.parentElement.scrollTop=1e9;
+  scrollIfNearBottom();
   msgCnt++;document.getElementById('b-msg').textContent=msgCnt;
+}
+function createStreamBubble(){
+  const d=document.createElement('div');d.className='msg';
+  const who=document.createElement('div');who.className='mwho j';who.textContent='JARVIS';
+  const body=document.createElement('div');body.className='mbody j';
+  const span=document.createElement('span');
+  const cur=document.createElement('span');cur.className='stream-cursor';
+  body.appendChild(span);body.appendChild(cur);
+  d.appendChild(who);d.appendChild(body);
+  feed.appendChild(d);
+  while(feed.children.length>120)feed.firstChild.remove();
+  scrollIfNearBottom();
+  msgCnt++;document.getElementById('b-msg').textContent=msgCnt;
+  return{span,cur};
 }
 
 // ── EVENT LOG ──
@@ -846,14 +873,80 @@ function drawRadar(){
 })();
 
 // ── CMD INPUT ──
-function sendCmd(){
-  const inp=document.getElementById('cmd-input');
-  const val=inp.value.trim();if(!val)return;
-  if(ws?.readyState!==1){addEvt('Not connected — command not sent','al');return;}
-  ws.send(JSON.stringify({type:'chat',message:val}));
-  addMsg('YOU ▶',val,'r');typing.classList.add('show');inp.value='';
-  arcReact('PROCESSING',500);
+let _streaming=false,_ttsEnabled=false;
+
+function speak(text){
+  if(!text||!_ttsEnabled||!window.speechSynthesis)return;
+  window.speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text.replace(/[#*`[\]>]/g,''));
+  u.lang='ko-KR';u.rate=1.05;
+  window.speechSynthesis.speak(u);
 }
+
+function toggleTTS(){
+  _ttsEnabled=!_ttsEnabled;
+  const btn=document.getElementById('tts-btn');
+  if(btn)btn.className=_ttsEnabled?'on':'';
+  addEvt('TTS '+(_ttsEnabled?'ON':'OFF'),_ttsEnabled?'hi':'');
+}
+
+function startVoice(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){addEvt('음성 인식 미지원 브라우저','al');return;}
+  if(_streaming)return;
+  const rec=new SR();rec.lang='ko-KR';rec.interimResults=false;
+  const btn=document.getElementById('mic-btn');
+  rec.onstart=()=>{if(btn)btn.classList.add('active');arcReact('LISTENING',8000);addEvt('Voice input active','hi');};
+  rec.onend=()=>{if(btn)btn.classList.remove('active');};
+  rec.onresult=e=>{
+    const text=e.results[0][0].transcript;
+    document.getElementById('cmd-input').value=text;
+    sendCmd();
+  };
+  rec.onerror=e=>{if(btn)btn.classList.remove('active');addEvt('Voice error: '+e.error,'al');};
+  rec.start();
+}
+
+async function sendCmd(){
+  const inp=document.getElementById('cmd-input');
+  const val=inp.value.trim();if(!val||_streaming)return;
+  _streaming=true;document.getElementById('cmd-send').disabled=true;
+  addMsg('YOU ▶',val,'r');scrollToBottom();inp.value='';
+  arcReact('PROCESSING',500);
+
+  const bubble=createStreamBubble();
+  let fullReply='';
+  try{
+    const resp=await fetch('/chat/stream',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:val})
+    });
+    if(!resp.ok)throw new Error(resp.status);
+    const reader=resp.body.getReader();const dec=new TextDecoder();
+    let buf='';
+    outer:while(true){
+      const{done,value}=await reader.read();if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      const parts=buf.split('\n\n');buf=parts.pop();
+      for(const p of parts){
+        if(!p.startsWith('data: '))continue;
+        try{const obj=JSON.parse(p.slice(6));
+          if(obj.done){reader.cancel();break outer;}
+          fullReply+=obj.chunk;bubble.span.textContent=fullReply;scrollIfNearBottom();
+        }catch{}
+      }
+    }
+  }catch{
+    fullReply='통신 오류가 발생했어요.';
+    bubble.span.textContent=fullReply;
+  }
+  bubble.cur.remove();scrollIfNearBottom();
+  typing.classList.remove('show');
+  arcReact('RESPONDING',Math.min(4000,1500+fullReply.length*20));
+  speak(fullReply);
+  _streaming=false;document.getElementById('cmd-send').disabled=false;
+}
+
 document.getElementById('cmd-input').addEventListener('keydown',e=>{
   if(e.key==='Enter'){e.preventDefault();sendCmd();}
 });
@@ -882,7 +975,7 @@ async function doQuick(action){
 
   }else if(action==='clear'){
     feed.innerHTML='';fetch('/reset',{method:'POST'});
-    addMsg('SYSTEM','대화 기록 초기화, Sir.','s');addEvt('Conversation reset','');
+    addMsg('SYSTEM','대화 기록 초기화했어요.','s');addEvt('Conversation reset','');
   }
 }
 
