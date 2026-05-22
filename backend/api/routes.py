@@ -800,16 +800,29 @@ async def sync_phone(req: PhoneSyncRequest):
     Data is stored in DeviceContext and injected into every subsequent LLM call.
     """
     from core.device_context import device_ctx
-    device_ctx.update_phone(req.model_dump())
-    # Broadcast to HUD so it can show phone state changes
-    await dispatcher.emit({
-        "type":    "device_sync",
-        "device":  "phone",
-        "battery": req.battery,
-        "charging": req.charging,
-        "zone":    req.location_zone,
+    phone_data = req.model_dump(exclude_none=False)
+    device_ctx.update_phone(phone_data)
+
+    # Build WS payload — omit lat/lon when not reported this cycle
+    ws_payload: dict = {
+        "type":        "device_sync",
+        "device":      "phone",
+        "battery":     req.battery,
+        "charging":    req.charging,
+        "zone":        req.location_zone,
         "notif_count": len(req.notifications),
-    }, Priority.LOW)
+    }
+    if req.lat is not None and req.lon is not None:
+        ws_payload["lat"] = req.lat
+        ws_payload["lon"] = req.lon
+
+    # Push to HUD via dispatcher (Priority.LOW)
+    await dispatcher.emit(ws_payload, Priority.LOW)
+
+    # Also push directly to iPhone streaming clients (/ws/stream)
+    if _manager and _manager.streaming_count > 0:
+        await _manager.broadcast_streaming(ws_payload)
+
     return {"status": "ok", "device": "phone", "context": device_ctx.build_context_block()}
 
 

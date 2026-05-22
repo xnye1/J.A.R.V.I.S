@@ -5,7 +5,7 @@ Adding a new endpoint model? Add it here, not in main.py.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
@@ -160,17 +160,21 @@ class PhoneSyncRequest(BaseModel):
         "location_zone": "home",
         "wifi": "HomeNetwork",
         "active_app": "YouTube",
+        "lat": 37.5665, "lon": 126.9780,
         "notifications": [
           {"app": "Messages", "sender": "홍길동", "text": "언제와?", "time": "14:32"}
         ]
       }
     """
-    battery:       int                    = 0
+    battery:       int                    = Field(default=0,  ge=0, le=100)
     charging:      bool                   = False
     location_zone: str                    = ""   # home | school | out | dorm | unknown
     wifi:          str                    = ""
     active_app:    str                    = ""
-    volume:        int                    = 0
+    volume:        int                    = Field(default=0,  ge=0, le=100)
+    # GPS coordinates — None means not reported this cycle (not a spike/error)
+    lat:           float | None           = Field(default=None, ge=-90.0,  le=90.0)
+    lon:           float | None           = Field(default=None, ge=-180.0, le=180.0)
     notifications: list[NotificationItem] = []
 
 

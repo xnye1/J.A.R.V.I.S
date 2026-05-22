@@ -394,7 +394,7 @@ function connect() {
   ws.onclose = () => {
     setConn(false);
     _retryTimer = setTimeout(connect, _retryMs);
-    _retryMs    = Math.min(_retryMs * 2, 30000);
+    _retryMs    = Math.min(_retryMs * 1.5, 3000);
   };
 
   ws.onerror = () => ws.close();
@@ -692,22 +692,27 @@ function _playNext() {
 function _unlockAudio() {
   if (audioCtx.state === 'suspended') audioCtx.resume();
 }
-document.addEventListener('touchstart', _unlockAudio, { once: true });
-document.addEventListener('click',      _unlockAudio, { once: true });
+document.addEventListener('touchstart', _unlockAudio, { passive: true });
+document.addEventListener('click',      _unlockAudio);
 
 // ── Voice input — binary audio → /ws/stream ───────────────────────────────────
 const micBtn  = document.getElementById('mic-btn');
 const micHint = document.getElementById('mic-hint');
-let _rec = null, _chunks = [], _recMime = '';
+let _rec = null, _micStream = null, _chunks = [], _recMime = '';
 
 async function startVoice() {
   if (!IS_HTTPS || _rec || _busy || ws.readyState !== WebSocket.OPEN) return;
-  stopAudio();  // clear any queued/playing audio before recording
+  stopAudio();
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Reuse existing stream to avoid repeated iOS permission prompts
+    if (!_micStream || _micStream.getTracks().some(t => t.readyState === 'ended')) {
+      _micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 },
+      });
+    }
     _recMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
              : MediaRecorder.isTypeSupported('audio/mp4')              ? 'audio/mp4' : '';
-    _rec    = new MediaRecorder(stream, _recMime ? { mimeType: _recMime } : {});
+    _rec    = new MediaRecorder(_micStream, _recMime ? { mimeType: _recMime } : {});
     _chunks = [];
     _rec.ondataavailable = e => { if (e.data.size > 0) _chunks.push(e.data); };
     _rec.start(100);
@@ -715,6 +720,7 @@ async function startVoice() {
     micHint.textContent = '듣는 중…';
     _unlockAudio();
   } catch {
+    _micStream = null;  // force re-acquire on next attempt
     micHint.textContent = '마이크 권한 필요';
     setTimeout(() => { micHint.textContent = 'HOLD TO SPEAK'; }, 2500);
   }
@@ -729,7 +735,7 @@ async function stopVoice() {
   await new Promise(resolve => {
     _rec.onstop = resolve;
     _rec.stop();
-    _rec.stream.getTracks().forEach(t => t.stop());
+    // Keep _micStream alive — iOS reuses the existing permission grant
   });
   _rec = null;
 
