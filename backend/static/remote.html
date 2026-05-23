@@ -60,7 +60,8 @@ body::after {
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 16px; flex-shrink: 0;
   border-bottom: 1px solid var(--border);
-  background: rgba(0,4,14,0.72); backdrop-filter: blur(14px);
+  background: rgba(0,4,14,0.72); backdrop-filter: blur(20px);
+  box-shadow: 0 1px 0 rgba(0,212,255,0.1);
 }
 .brand {
   font-family: 'Orbitron', monospace; font-size: 14px; font-weight: 900; letter-spacing: 5px;
@@ -143,7 +144,8 @@ body::after {
 .stat-card {
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 8px; padding: 6px 4px; text-align: center;
-  backdrop-filter: blur(14px); position: relative; overflow: hidden;
+  backdrop-filter: blur(16px) saturate(1.2); position: relative; overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.4), 0 0 0 1px rgba(0,212,255,0.06) inset;
 }
 .stat-card::after {
   content: ''; position: absolute; top: 0; left: 10%; right: 10%; height: 1px;
@@ -367,6 +369,49 @@ body::after {
 
 </div>
 <script>
+// ── MARKDOWN STRIP + TYPER ────────────────────────────────────────────────────
+function stripMd(s){
+  if(!s)return'';
+  return String(s)
+    .replace(/```[\s\S]*?```/g,'')
+    .replace(/`([^`]+)`/g,'$1')
+    .replace(/\*\*([^*]+)\*\*/g,'$1')
+    .replace(/\*([^*]+)\*/g,'$1')
+    .replace(/__([^_]+)__/g,'$1')
+    .replace(/_([^_]+)_/g,'$1')
+    .replace(/^#{1,6}\s+/gm,'')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g,'$1')
+    .replace(/^[>\s]*>\s*/gm,'')
+    .replace(/^\s*[-*+]\s+/gm,'• ')
+    .replace(/\[OPEN:[^\]]+\]/g,'')
+    .trim();
+}
+class Typer{
+  constructor(){this._q='';this._idx=0;this._span=null;this._t=null;this._cb=null;}
+  attach(span,scrollCb){this._span=span;this._q='';this._idx=0;this._cb=scrollCb||null;}
+  push(raw){
+    this._q+=stripMd(raw);
+    if(!this._t)this._run();
+  }
+  _run(){
+    if(!this._span||this._idx>=this._q.length){this._t=null;return;}
+    this._idx++;
+    this._span.textContent=this._q.slice(0,this._idx);
+    if(this._cb)this._cb();
+    const ch=this._q[this._idx-1];
+    const bl=this._q.length-this._idx;
+    const base=bl>80?6:bl>20?14:22;
+    const d=/[.!?]/.test(ch)?Math.max(base,65):/[,;:]/.test(ch)?Math.max(base,32):base;
+    this._t=setTimeout(()=>this._run(),d);
+  }
+  flush(){
+    clearTimeout(this._t);this._t=null;
+    if(this._span&&this._idx<this._q.length){this._span.textContent=this._q;this._idx=this._q.length;}
+    if(this._cb)this._cb();
+  }
+}
+let _typer = new Typer();
+
 // Auto-redirect HTTP → HTTPS so microphone access works
 if (location.protocol === 'http:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
   location.replace('https://' + location.hostname + location.pathname);
@@ -401,7 +446,8 @@ function scrollIfNearBottom() { if (_nearBottom()) scrollToBottom(); }
 
 function addMsg(who, text, cls) {
   const block = document.createElement('div'); block.className = 'msg-block';
-  block.innerHTML = `<div class="msg-who ${cls}">${who}</div><div class="msg-text ${cls}">${text}</div>`;
+  const body = cls === 'j' ? stripMd(text) : text;
+  block.innerHTML = `<div class="msg-who ${cls}">${who}</div><div class="msg-text ${cls}">${body}</div>`;
   feed.appendChild(block);
   scrollIfNearBottom();
 }
@@ -416,6 +462,7 @@ function createStreamBubble() {
   block.appendChild(who); block.appendChild(wrap);
   feed.appendChild(block);
   scrollIfNearBottom();
+  _typer.attach(span, scrollIfNearBottom);
   return { span, cur };
 }
 
@@ -554,7 +601,7 @@ async function sendMsg(text) {
           const obj = JSON.parse(p.slice(6));
           if (obj.done) { reader.cancel(); break; }
           fullReply += obj.chunk;
-          bubble.span.textContent = fullReply;
+          _typer.push(obj.chunk);
           scrollIfNearBottom();
         } catch {}
       }
@@ -564,7 +611,7 @@ async function sendMsg(text) {
     bubble.span.textContent = fullReply;
   }
 
-  bubble.cur.remove();
+  _typer.flush(); bubble.cur.remove();
   scrollIfNearBottom();
   speak(fullReply);
 

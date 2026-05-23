@@ -82,7 +82,8 @@ body::after {
   padding: 9px 16px; flex-shrink: 0;
   border-bottom: 1px solid var(--border);
   background: rgba(0,4,14,0.7);
-  backdrop-filter: blur(14px);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 1px 0 rgba(0,212,255,0.1);
 }
 .brand {
   font-family: 'Orbitron', monospace; font-size: 15px; font-weight: 900;
@@ -92,7 +93,7 @@ body::after {
   background-clip: text;
 }
 .sr { display: flex; align-items: center; gap: 8px; }
-#phone-bat { font-size: 9px; letter-spacing: 1px; color: var(--green); display: none; }
+#phone-bat { font-size: 9px; letter-spacing: 1px; color: var(--green); display: none; transition: opacity .4s, color .3s; }
 #mode-badge {
   font-family: 'Orbitron', monospace; font-size: 7px; letter-spacing: 2px; font-weight: 700;
   padding: 2px 7px; border-radius: 3px;
@@ -112,7 +113,8 @@ body::after {
 .sc {
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 8px; padding: 7px 4px; text-align: center;
-  backdrop-filter: blur(14px); position: relative; overflow: hidden;
+  backdrop-filter: blur(16px) saturate(1.2); position: relative; overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.4), 0 0 0 1px rgba(0,212,255,0.06) inset;
 }
 .sc::after {
   content: ''; position: absolute; top: 0; left: 10%; right: 10%; height: 1px;
@@ -186,6 +188,9 @@ body::after {
   font-size: 10px; color: var(--cyan); padding: 2px 18px;
   min-height: 18px; flex-shrink: 0; letter-spacing: 1px;
 }
+
+/* ── Voice wave canvas ─────────────────────────────────────────────────────── */
+#voice-wave { width: 100%; height: 44px; flex-shrink: 0; display: block; }
 
 /* ── Mic area ─────────────────────────────────────────────────────────────── */
 #mic-area {
@@ -316,6 +321,8 @@ body::after {
 
   <div id="stt-line"></div>
 
+  <canvas id="voice-wave"></canvas>
+
   <div id="mic-area">
     <div id="mic-btn">
       <div class="mic-ring r1"></div>
@@ -366,6 +373,49 @@ body::after {
 </div>
 
 <script>
+// ── MARKDOWN STRIP + TYPER ────────────────────────────────────────────────────
+function stripMd(s){
+  if(!s)return'';
+  return String(s)
+    .replace(/```[\s\S]*?```/g,'')
+    .replace(/`([^`]+)`/g,'$1')
+    .replace(/\*\*([^*]+)\*\*/g,'$1')
+    .replace(/\*([^*]+)\*/g,'$1')
+    .replace(/__([^_]+)__/g,'$1')
+    .replace(/_([^_]+)_/g,'$1')
+    .replace(/^#{1,6}\s+/gm,'')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g,'$1')
+    .replace(/^[>\s]*>\s*/gm,'')
+    .replace(/^\s*[-*+]\s+/gm,'• ')
+    .replace(/\[OPEN:[^\]]+\]/g,'')
+    .trim();
+}
+class Typer{
+  constructor(){this._q='';this._idx=0;this._span=null;this._t=null;this._cb=null;}
+  attach(span,scrollCb){this._span=span;this._q='';this._idx=0;this._cb=scrollCb||null;}
+  push(raw){
+    this._q+=stripMd(raw);
+    if(!this._t)this._run();
+  }
+  _run(){
+    if(!this._span||this._idx>=this._q.length){this._t=null;return;}
+    this._idx++;
+    this._span.textContent=this._q.slice(0,this._idx);
+    if(this._cb)this._cb();
+    const ch=this._q[this._idx-1];
+    const bl=this._q.length-this._idx;
+    const base=bl>80?6:bl>20?14:22;
+    const d=/[.!?]/.test(ch)?Math.max(base,65):/[,;:]/.test(ch)?Math.max(base,32):base;
+    this._t=setTimeout(()=>this._run(),d);
+  }
+  flush(){
+    clearTimeout(this._t);this._t=null;
+    if(this._span&&this._idx<this._q.length){this._span.textContent=this._q;this._idx=this._q.length;}
+    if(this._cb)this._cb();
+  }
+}
+let _typer = new Typer();
+
 // ── HTTPS guard ───────────────────────────────────────────────────────────────
 const IS_HTTPS = location.protocol === 'https:';
 if (!IS_HTTPS && !['localhost','127.0.0.1'].includes(location.hostname)) {
@@ -491,13 +541,13 @@ function onMsg(msg) {
 
     case 'text_chunk':
       if (_streamBubble) {
-        _streamBubble.span.textContent += msg.chunk;
+        _typer.push(msg.chunk);
         scrollIfNearBottom();
       }
       break;
 
     case 'text_done':
-      if (_streamBubble) { _streamBubble.cur.remove(); _streamBubble = null; }
+      if (_streamBubble) { _typer.flush(); _streamBubble.cur.remove(); _streamBubble = null; }
       sttLine('');
       scrollIfNearBottom();
       break;
@@ -568,7 +618,8 @@ function sttLine(t) { document.getElementById('stt-line').textContent = t; }
 
 function addMsg(who, text, cls) {
   const b = document.createElement('div'); b.className = 'mb';
-  b.innerHTML = `<div class="mw ${cls}">${who}</div><div class="mt ${cls}">${text}</div>`;
+  const body = cls === 'j' ? stripMd(text) : text;
+  b.innerHTML = `<div class="mw ${cls}">${who}</div><div class="mt ${cls}">${body}</div>`;
   feed.appendChild(b); scrollIfNearBottom();
 }
 
@@ -580,6 +631,7 @@ function createStreamBubble() {
   const c = document.createElement('span'); c.className = 'stream-cursor';
   m.appendChild(s); m.appendChild(c); b.appendChild(w); b.appendChild(m);
   feed.appendChild(b); scrollIfNearBottom();
+  _typer.attach(s, scrollIfNearBottom);
   return { span: s, cur: c };
 }
 
@@ -646,9 +698,14 @@ document.getElementById('txt-input').addEventListener('keydown', e => {
 
 // ── AudioContext queue — gapless sentence-level playback ──────────────────────
 const audioCtx   = new (window.AudioContext || window.webkitAudioContext)();
+const analyserNode = audioCtx.createAnalyser();
+analyserNode.fftSize = 256; analyserNode.smoothingTimeConstant = 0.88;
+analyserNode.connect(audioCtx.destination);
+const _waveData = new Uint8Array(analyserNode.frequencyBinCount);
 const audioQueue = [];
 let   _playing   = false;
 let   _currentSrc = null;
+let   _waveAmp = 0, _waveT = 0;
 
 function stopAudio() {
   audioQueue.length = 0;
@@ -675,7 +732,7 @@ function _playNext() {
       const src = audioCtx.createBufferSource();
       _currentSrc = src;
       src.buffer = decoded;
-      src.connect(audioCtx.destination);
+      src.connect(analyserNode); analyserNode.connect(audioCtx.destination);
       src.start(0);
       src.onended = _playNext;
     },
@@ -770,6 +827,57 @@ setInterval(() => {
   if (ws.readyState === WebSocket.OPEN)
     ws.send(JSON.stringify({ type: 'ping' }));
 }, 25000);
+
+// ── Voice waveform RAF loop (30fps) ──────────────────────────────────────────
+{
+  const wvc = document.getElementById('voice-wave');
+  const wvctx = wvc.getContext('2d');
+  let _wvLast = 0;
+  function _drawVoiceWave(ts) {
+    requestAnimationFrame(_drawVoiceWave);
+    if (ts - _wvLast < 33) return;
+    _wvLast = ts;
+    const w = wvc.offsetWidth, h = 44;
+    if (wvc.width !== w) { wvc.width = w; wvc.height = h; }
+    wvctx.clearRect(0, 0, w, h);
+    const mid = h / 2;
+    if (_playing) {
+      _waveAmp = Math.min(1, _waveAmp + 0.05);
+      analyserNode.getByteTimeDomainData(_waveData);
+      const grad = wvctx.createLinearGradient(0, 0, w, 0);
+      grad.addColorStop(0, 'rgba(0,212,255,0)');
+      grad.addColorStop(0.15, 'rgba(0,212,255,' + _waveAmp + ')');
+      grad.addColorStop(0.5, 'rgba(200,255,255,' + _waveAmp + ')');
+      grad.addColorStop(0.85, 'rgba(0,212,255,' + _waveAmp + ')');
+      grad.addColorStop(1, 'rgba(0,212,255,0)');
+      wvctx.beginPath();
+      wvctx.strokeStyle = grad;
+      wvctx.lineWidth = _waveAmp > 0.5 ? 2.2 : 1.0 + _waveAmp * 2.4;
+      for (let x = 0; x < w; x++) {
+        const idx = Math.floor((x / w) * _waveData.length);
+        const v = (_waveData[idx] - 128) / 128;
+        const y = mid + v * mid * 0.85 * _waveAmp;
+        x === 0 ? wvctx.moveTo(x, y) : wvctx.lineTo(x, y);
+      }
+      wvctx.stroke();
+    } else {
+      _waveAmp = Math.max(0, _waveAmp - 0.02);
+      wvctx.globalAlpha = 0.25;
+      wvctx.beginPath();
+      wvctx.strokeStyle = '#00d4ff';
+      wvctx.lineWidth = 1.0;
+      for (let x = 0; x < w; x++) {
+        const amp = Math.sin(_waveT * 0.03 + x * 0.4) * 6 + Math.sin(_waveT * 0.07 + x * 0.15) * 4;
+        const y = mid + amp * Math.sin(x * 0.055 + _waveT * 0.045) * 0.5;
+        x === 0 ? wvctx.moveTo(x, y) : wvctx.lineTo(x, y);
+      }
+      wvctx.stroke();
+      wvctx.globalAlpha = 1.0;
+      _waveT += 2;
+    }
+  }
+  requestAnimationFrame(_drawVoiceWave);
+}
 </script>
 </body>
 </html>
