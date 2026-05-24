@@ -476,6 +476,7 @@ body.static-mode .led,body.static-mode .svdot,body.static-mode .td{animation:non
     <button class="qa-btn" onclick="doQuick('status')">📊 상태</button>
     <button class="qa-btn" onclick="doQuick('study')">📚 야간 요약</button>
     <button class="qa-btn" onclick="doQuick('clear')">🗑 초기화</button>
+    <button class="qa-btn" id="clap-qa" onclick="doQuick('clap')" style="position:relative">👏 CLAP</button>
   </div>
   <div id="sim-warn">⚠ SIMULATION MODE — GEMINI KEY PENDING</div>
 </div>
@@ -657,6 +658,89 @@ class Typer{
   }
 }
 let _typer=new Typer();
+
+// ── CLAP DETECTOR ──
+class ClapDetector{
+  constructor(onDouble){
+    this._onDouble=onDouble;this._active=false;this._paused=false;
+    this._stream=null;this._actx=null;
+    this._lastClap=0;this._clapCount=0;this._resetTimer=null;
+  }
+  async enable(){
+    if(this._active)return;
+    this._stream=await navigator.mediaDevices.getUserMedia(
+      {audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+    this._actx=new AudioContext();
+    const src=this._actx.createMediaStreamSource(this._stream);
+    const analyser=this._actx.createAnalyser();
+    analyser.fftSize=512;analyser.smoothingTimeConstant=0;
+    src.connect(analyser);
+    const buf=new Float32Array(analyser.fftSize);
+    const THRESH=0.22,COOLDOWN=130,WIN=600;
+    let _inSpike=false,_lastDetect=0;
+    this._active=true;
+    const tick=()=>{
+      if(!this._active)return;
+      requestAnimationFrame(tick);
+      if(this._paused)return;
+      analyser.getFloatTimeDomainData(buf);
+      let peak=0;
+      for(let i=0;i<buf.length;i++)peak=Math.max(peak,Math.abs(buf[i]));
+      const now=Date.now();
+      if(peak>THRESH&&!_inSpike&&now-_lastDetect>COOLDOWN){
+        _inSpike=true;_lastDetect=now;
+        const gap=now-this._lastClap;
+        if(this._clapCount===1&&gap<WIN){
+          clearTimeout(this._resetTimer);
+          this._clapCount=0;this._lastClap=0;
+          this._onDouble();
+        }else{
+          this._clapCount=1;this._lastClap=now;
+          clearTimeout(this._resetTimer);
+          this._resetTimer=setTimeout(()=>{this._clapCount=0;},WIN);
+        }
+      }else if(peak<THRESH*0.15){_inSpike=false;}
+    };
+    requestAnimationFrame(tick);
+  }
+  pause(){this._paused=true;}
+  resume(){this._paused=false;}
+  disable(){
+    this._active=false;clearTimeout(this._resetTimer);
+    this._stream?.getTracks().forEach(t=>t.stop());
+    this._actx?.close().catch(()=>{});
+    this._stream=null;this._actx=null;this._clapCount=0;
+  }
+}
+
+let _clapDetector=null;
+
+async function toggleClapHud(){
+  const btn=document.getElementById('clap-qa');
+  if(_clapDetector){
+    _clapDetector.disable();_clapDetector=null;
+    if(btn){btn.textContent='👏 CLAP';btn.style.color='';btn.style.borderColor='';}
+    addEvt('Clap mode OFF','');return;
+  }
+  addEvt('Clap mode 활성화 중…','hi');
+  try{
+    _clapDetector=new ClapDetector(()=>{
+      if(_streaming)return;
+      _clapDetector.pause();
+      flash();arcReact('CLAP WAKE',2000);
+      addEvt('👏 박수 감지 — 음성 인식 시작','hi');
+      startVoice();
+      // SpeechRecognition ends itself; resume clap after 6s max
+      setTimeout(()=>_clapDetector?.resume(),6000);
+    });
+    await _clapDetector.enable();
+    if(btn){btn.textContent='👏 CLAP: ON';btn.style.color='var(--c)';btn.style.borderColor='rgba(0,212,255,.55)';}
+    addEvt('👏 박수 모드 ON — 두 번 치면 JARVIS','hi');
+  }catch(e){
+    _clapDetector=null;
+    addEvt('마이크 권한 필요','al');
+  }
+}
 
 // ── AUDIO CONTEXT (for waveform analyser) ──
 let _hudAudioCtx=null,_hudAnalyser=null,_hudVoiceActive=false,_hudVoiceAmp=0;
@@ -1113,6 +1197,9 @@ async function doQuick(action){
   }else if(action==='clear'){
     feed.innerHTML='';fetch('/reset',{method:'POST'});
     addMsg('SYSTEM','대화 기록 초기화했어요.','s');addEvt('Conversation reset','');
+
+  }else if(action==='clap'){
+    toggleClapHud();
   }
 }
 

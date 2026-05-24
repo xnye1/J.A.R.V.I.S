@@ -243,6 +243,23 @@ body::after {
   flex-shrink: 0; display: grid; grid-template-columns: repeat(3,1fr);
   gap: 5px; padding: 4px 14px 5px;
 }
+.qb.clap-toggle {
+  grid-column: span 3; flex-direction: row; gap: 8px; justify-content: center;
+  border-color: rgba(0,212,255,0.15); transition: background .2s, border-color .2s, box-shadow .2s;
+}
+.qb.clap-toggle.active {
+  background: rgba(0,212,255,0.10); border-color: rgba(0,212,255,0.55);
+  box-shadow: 0 0 18px rgba(0,212,255,0.18);
+}
+.qb.clap-toggle.active .ql { color: var(--cyan); }
+.qb.clap-toggle .ql { font-size: 8px; letter-spacing: 2px; }
+.clap-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--muted);
+  flex-shrink: 0; transition: background .2s, box-shadow .2s;
+}
+.qb.clap-toggle.active .clap-dot {
+  background: var(--cyan); box-shadow: 0 0 8px var(--cyan); animation: blink 1.4s infinite;
+}
 .qb {
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 9px; padding: 8px 4px;
@@ -357,6 +374,11 @@ body::after {
     <div class="qb" onclick="clearFeed()">
       <span class="qi">🗑</span><span class="ql">CLEAR</span>
     </div>
+    <div class="qb clap-toggle" id="clap-qb" onclick="toggleClap()">
+      <span class="clap-dot"></span>
+      <span class="qi" id="clap-qi">👏</span>
+      <span class="ql" id="clap-ql">CLAP MODE</span>
+    </div>
   </div>
 
   <div id="input-bar">
@@ -373,6 +395,107 @@ body::after {
 </div>
 
 <script>
+// ── CLAP DETECTOR ────────────────────────────────────────────────────────────
+class ClapDetector {
+  constructor(onDouble) {
+    this._onDouble = onDouble;
+    this._active = false; this._paused = false;
+    this._stream = null; this._actx = null;
+    this._lastClap = 0; this._clapCount = 0; this._resetTimer = null;
+  }
+  async enable() {
+    if (this._active) return;
+    this._stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+    this._actx = new AudioContext();
+    const src = this._actx.createMediaStreamSource(this._stream);
+    const analyser = this._actx.createAnalyser();
+    analyser.fftSize = 512; analyser.smoothingTimeConstant = 0;
+    src.connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+    const THRESH = 0.22, COOLDOWN = 130, WIN = 600;
+    let _inSpike = false, _lastDetect = 0;
+    this._active = true;
+    const tick = () => {
+      if (!this._active) return;
+      requestAnimationFrame(tick);
+      if (this._paused) return;
+      analyser.getFloatTimeDomainData(buf);
+      let peak = 0;
+      for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i]));
+      const now = Date.now();
+      if (peak > THRESH && !_inSpike && now - _lastDetect > COOLDOWN) {
+        _inSpike = true; _lastDetect = now;
+        const gap = now - this._lastClap;
+        if (this._clapCount === 1 && gap < WIN) {
+          clearTimeout(this._resetTimer);
+          this._clapCount = 0; this._lastClap = 0;
+          this._onDouble();
+        } else {
+          this._clapCount = 1; this._lastClap = now;
+          clearTimeout(this._resetTimer);
+          this._resetTimer = setTimeout(() => { this._clapCount = 0; }, WIN);
+        }
+      } else if (peak < THRESH * 0.15) { _inSpike = false; }
+    };
+    requestAnimationFrame(tick);
+  }
+  pause() { this._paused = true; }
+  resume() { this._paused = false; }
+  disable() {
+    this._active = false; clearTimeout(this._resetTimer);
+    this._stream?.getTracks().forEach(t => t.stop());
+    this._actx?.close().catch(() => {});
+    this._stream = null; this._actx = null; this._clapCount = 0;
+  }
+}
+
+let _clapDetector = null;
+
+async function toggleClap() {
+  const btn = document.getElementById('clap-qb');
+  const ql  = document.getElementById('clap-ql');
+  if (_clapDetector) {
+    _clapDetector.disable(); _clapDetector = null;
+    btn.classList.remove('active');
+    ql.textContent = 'CLAP MODE';
+    sttLine(''); return;
+  }
+  sttLine('박수 모드 활성화 중…');
+  try {
+    _clapDetector = new ClapDetector(async () => {
+      if (_busy || _rec || ws?.readyState !== WebSocket.OPEN) return;
+      _clapDetector.pause();
+      // Pulse mic button
+      const mb = document.getElementById('mic-btn');
+      mb.style.boxShadow = '0 0 60px rgba(0,212,255,0.9)';
+      setTimeout(() => { mb.style.boxShadow = ''; }, 300);
+      sttLine('👏 감지 — 말씀하세요, Sir…');
+      await new Promise(r => setTimeout(r, 280));
+      await startVoice();
+      // Auto-stop after 5s or silence
+      const MAX = 5000; const t0 = Date.now();
+      await new Promise(res => {
+        const id = setInterval(() => {
+          if (!_rec || Date.now() - t0 > MAX) { clearInterval(id); res(); }
+        }, 200);
+      });
+      if (_rec) await stopVoice();
+      _clapDetector?.resume();
+    });
+    await _clapDetector.enable();
+    btn.classList.add('active');
+    ql.textContent = 'CLAP: ON';
+    sttLine('👏 박수 두 번 → JARVIS 활성화');
+    setTimeout(() => sttLine(''), 3000);
+  } catch(e) {
+    _clapDetector = null;
+    sttLine('마이크 권한이 필요합니다');
+    setTimeout(() => sttLine(''), 2500);
+  }
+}
+
 // ── MARKDOWN STRIP + TYPER ────────────────────────────────────────────────────
 function stripMd(s){
   if(!s)return'';
