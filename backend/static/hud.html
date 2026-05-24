@@ -567,7 +567,7 @@ const _appEl=document.getElementById('app');
 function bootStep(){
   if(_bi>=BOOT_LOGS.length){
     setTimeout(()=>{_bootEl.classList.add('fade');_appEl.classList.add('visible');
-      setTimeout(()=>_bootEl.style.display='none',900);},300);
+      setTimeout(()=>{_bootEl.style.display='none';autoStartClap();},900);},300);
     return;
   }
   _bl.textContent=BOOT_LOGS[_bi];
@@ -715,14 +715,16 @@ class ClapDetector{
 
 let _clapDetector=null;
 
-async function toggleClapHud(){
+function _setClapBtn(on){
   const btn=document.getElementById('clap-qa');
-  if(_clapDetector){
-    _clapDetector.disable();_clapDetector=null;
-    if(btn){btn.textContent='👏 CLAP';btn.style.color='';btn.style.borderColor='';}
-    addEvt('Clap mode OFF','');return;
-  }
-  addEvt('Clap mode 활성화 중…','hi');
+  if(!btn)return;
+  btn.textContent=on?'👏 CLAP: ON':'👏 CLAP';
+  btn.style.color=on?'var(--c)':'';
+  btn.style.borderColor=on?'rgba(0,212,255,.55)':'';
+}
+
+async function autoStartClap(){
+  if(_clapDetector)return;
   try{
     _clapDetector=new ClapDetector(()=>{
       if(_streaming)return;
@@ -730,15 +732,29 @@ async function toggleClapHud(){
       flash();arcReact('CLAP WAKE',2000);
       addEvt('👏 박수 감지 — 음성 인식 시작','hi');
       startVoice();
-      // SpeechRecognition ends itself; resume clap after 6s max
       setTimeout(()=>_clapDetector?.resume(),6000);
     });
     await _clapDetector.enable();
-    if(btn){btn.textContent='👏 CLAP: ON';btn.style.color='var(--c)';btn.style.borderColor='rgba(0,212,255,.55)';}
-    addEvt('👏 박수 모드 ON — 두 번 치면 JARVIS','hi');
+    _setClapBtn(true);
+    addEvt('👏 박수 감지 자동 대기 중','hi');
   }catch(e){
     _clapDetector=null;
-    addEvt('마이크 권한 필요','al');
+    // 마이크 권한 미허가 시 첫 클릭 때 재시도
+    document.addEventListener('click',async function _retry(){
+      document.removeEventListener('click',_retry);
+      await autoStartClap();
+    },{once:true});
+  }
+}
+
+async function toggleClapHud(){
+  const btn=document.getElementById('clap-qa');
+  if(_clapDetector){
+    _clapDetector.disable();_clapDetector=null;
+    _setClapBtn(false);
+    addEvt('Clap mode OFF','');
+  }else{
+    await autoStartClap();
   }
 }
 
